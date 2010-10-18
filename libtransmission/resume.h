@@ -35,7 +35,8 @@ enum
     TR_FR_ADDED_DATE          = ( 1 << 13 ),
     TR_FR_DONE_DATE           = ( 1 << 14 ),
     TR_FR_ACTIVITY_DATE       = ( 1 << 15 ),
-    TR_FR_RATIOLIMIT          = ( 1 << 16 )
+    TR_FR_RATIOLIMIT          = ( 1 << 16 ),
+    TR_FR_IDLELIMIT           = ( 1 << 17 )
 };
 
 /**
@@ -45,7 +46,7 @@ uint64_t tr_torrentLoadResume( tr_torrent *    tor,
                                uint64_t        fieldsToLoad,
                                const tr_ctor * ctor );
 
-void     tr_torrentSaveResume( const tr_torrent * tor );
+void     tr_torrentSaveResume( tr_torrent * tor );
 
 void     tr_torrentRemoveResume( const tr_torrent * tor );
 

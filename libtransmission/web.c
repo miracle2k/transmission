@@ -10,7 +10,11 @@
  * $Id$
  */
 
-#include <sys/select.h>
+#ifdef WIN32
+  #include <ws2tcpip.h>
+#else
+  #include <sys/select.h>
+#endif
 
 #include <curl/curl.h>
 #include <event.h>
@@ -24,6 +28,10 @@
 #include "utils.h"
 #include "version.h" /* User-Agent */
 #include "web.h"
+
+#if LIBCURL_VERSION_NUM >= 0x070F06 /* CURLOPT_SOCKOPT* was added in 7.15.6 */
+ #define USE_LIBCURL_SOCKOPT
+#endif
 
 enum
 {
@@ -51,10 +59,8 @@ enum
 struct tr_web
 {
     int close_mode;
-    tr_bool haveAddr;
     tr_list * tasks;
     tr_lock * taskLock;
-    tr_address addr;
 };
 
 
@@ -96,6 +102,7 @@ writeFunc( void * ptr, size_t size, size_t nmemb, void * vtask )
     return byteCount;
 }
 
+#ifdef USE_LIBCURL_SOCKOPT
 static int
 sockoptfunction( void * vtask, curl_socket_t fd, curlsocktype purpose UNUSED )
 {
@@ -115,6 +122,7 @@ sockoptfunction( void * vtask, curl_socket_t fd, curlsocktype purpose UNUSED )
     /* return nonzero if this function encountered an error */
     return 0;
 }
+#endif
 
 static int
 getCurlProxyType( tr_proxy_type t )
@@ -125,18 +133,26 @@ getCurlProxyType( tr_proxy_type t )
 }
 
 static long
-getTimeoutFromURL( const char * url )
+getTimeoutFromURL( const struct tr_web_task * task )
 {
-    if( strstr( url, "scrape" ) != NULL ) return 30L;
-    if( strstr( url, "announce" ) != NULL ) return 90L;
-    return 240L;
+    long timeout;
+    const tr_session * session = task->session;
+
+    if( !session || session->isClosed ) timeout = 20L;
+    else if( strstr( task->url, "scrape" ) != NULL ) timeout = 30L;
+    else if( strstr( task->url, "announce" ) != NULL ) timeout = 90L;
+    else timeout = 240L;
+
+    return timeout;
 }
 
 static CURL *
-createEasy( tr_session * s, struct tr_web * w, struct tr_web_task * task )
+createEasy( tr_session * s, struct tr_web_task * task )
 {
+    const tr_address * addr;
     CURL * e = curl_easy_init( );
     const long verbose = getenv( "TR_CURL_VERBOSE" ) != NULL;
+    char * cookie_filename = tr_buildPath( s->configDir, "cookies.txt", NULL );          
 
     if( !task->range && s->isProxyEnabled ) {
         const long proxyType = getCurlProxyType( s->proxyType );
@@ -154,26 +170,32 @@ createEasy( tr_session * s, struct tr_web * w, struct tr_web_task * task )
     }
 
     curl_easy_setopt( e, CURLOPT_AUTOREFERER, 1L );
+    curl_easy_setopt( e, CURLOPT_COOKIEFILE, cookie_filename ); 
     curl_easy_setopt( e, CURLOPT_ENCODING, "gzip;q=1.0, deflate, identity" );
     curl_easy_setopt( e, CURLOPT_FOLLOWLOCATION, 1L );
     curl_easy_setopt( e, CURLOPT_MAXREDIRS, -1L );
     curl_easy_setopt( e, CURLOPT_NOSIGNAL, 1L );
     curl_easy_setopt( e, CURLOPT_PRIVATE, task );
+#ifdef USE_LIBCURL_SOCKOPT
     curl_easy_setopt( e, CURLOPT_SOCKOPTFUNCTION, sockoptfunction );
     curl_easy_setopt( e, CURLOPT_SOCKOPTDATA, task );
+#endif
     curl_easy_setopt( e, CURLOPT_SSL_VERIFYHOST, 0L );
     curl_easy_setopt( e, CURLOPT_SSL_VERIFYPEER, 0L );
-    curl_easy_setopt( e, CURLOPT_TIMEOUT, getTimeoutFromURL( task->url ) );
+    curl_easy_setopt( e, CURLOPT_TIMEOUT, getTimeoutFromURL( task ) );
     curl_easy_setopt( e, CURLOPT_URL, task->url );
     curl_easy_setopt( e, CURLOPT_USERAGENT, TR_NAME "/" SHORT_VERSION_STRING );
     curl_easy_setopt( e, CURLOPT_VERBOSE, verbose );
     curl_easy_setopt( e, CURLOPT_WRITEDATA, task );
     curl_easy_setopt( e, CURLOPT_WRITEFUNCTION, writeFunc );
-    if( w->haveAddr )
-        curl_easy_setopt( e, CURLOPT_INTERFACE, tr_ntop_non_ts( &w->addr ) );
+
+    if(( addr = tr_sessionGetPublicAddress( s, TR_AF_INET )))
+        curl_easy_setopt( e, CURLOPT_INTERFACE, tr_ntop_non_ts( addr ) );
+
     if( task->range )
         curl_easy_setopt( e, CURLOPT_RANGE, task->range );
 
+    tr_free( cookie_filename ); 
     return e;
 }
 
@@ -227,14 +249,37 @@ tr_webRun( tr_session         * session,
     }
 }
 
-void
-tr_webSetInterface( tr_session * session, const tr_address * addr )
+/**
+ * Portability wrapper for select().
+ *
+ * http://msdn.microsoft.com/en-us/library/ms740141%28VS.85%29.aspx
+ * On win32, any two of the parameters, readfds, writefds, or exceptfds,
+ * can be given as null. At least one must be non-null, and any non-null
+ * descriptor set must contain at least one handle to a socket. 
+ */
+static void
+tr_select( int nfds,
+           fd_set * r_fd_set, fd_set * w_fd_set, fd_set * c_fd_set,
+           struct timeval  * t )
 {
-    struct tr_web * web = session->web;
-
-    if( web != NULL )
-        if(( web->haveAddr = ( addr != NULL )))
-            web->addr = *addr;
+#ifdef WIN32
+    if( !r_fd_set->fd_count && !w_fd_set->fd_count && !c_fd_set->fd_count )
+    {
+        const long int msec = t->tv_sec*1000 + t->tv_usec/1000;
+        tr_wait_msec( msec );
+    }
+    else if( select( 0, r_fd_set->fd_count ? r_fd_set : NULL,
+                        w_fd_set->fd_count ? w_fd_set : NULL,
+                        c_fd_set->fd_count ? c_fd_set : NULL, t ) < 0 )
+    {
+        char errstr[512];
+        const int e = EVUTIL_SOCKET_ERROR( );
+        tr_net_strerror( errstr, sizeof( errstr ), e );
+        dbgmsg( "Error: select (%d) %s", e, errstr ); 
+    }
+#else
+    select( nfds, r_fd_set, w_fd_set, c_fd_set, t );
+#endif
 }
 
 static void
@@ -274,7 +319,8 @@ tr_webThreadFunc( void * vsession )
         tr_lockLock( web->taskLock );
         while(( task = tr_list_pop_front( &web->tasks )))
         {
-            curl_multi_add_handle( multi, createEasy( session, web, task ));
+            dbgmsg( "adding task to curl: [%s]\n", task->url );
+            curl_multi_add_handle( multi, createEasy( session, task ));
             /*fprintf( stderr, "adding a task.. taskCount is now %d\n", taskCount );*/
             ++taskCount;
         }
@@ -305,7 +351,7 @@ tr_webThreadFunc( void * vsession )
             t.tv_sec =  usec / 1000000;
             t.tv_usec = usec % 1000000;
 
-            select( max_fd+1, &r_fd_set, &w_fd_set, &c_fd_set, &t );
+            tr_select( max_fd+1, &r_fd_set, &w_fd_set, &c_fd_set, &t );
         }
 
         /* call curl_multi_perform() */

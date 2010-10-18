@@ -1,11 +1,11 @@
 /*
- * This file Copyright (C) 2009-2010 Mnemosyne LLC
+ * This file Copyright (C) Mnemosyne LLC
  *
- * This file is licensed by the GPL version 2.  Works owned by the
- * Transmission project are granted a special exemption to clause 2(b)
- * so that the bulk of its code can remain under the MIT license.
- * This exemption does not extend to derived works not owned by
- * the Transmission project.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2
+ * as published by the Free Software Foundation.
+ *
+ * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
  *
  * $Id$
  */
@@ -15,12 +15,16 @@
 
 #include <QAbstractItemModel>
 #include <QObject>
+#include <QItemDelegate>
 #include <QList>
-#include <QString>
 #include <QSet>
+#include <QSize>
+#include <QString>
 #include <QTreeView>
 #include <QVariant>
-#include <QItemDelegate>
+
+class QSortFilterProxyModel;
+class QStyle;
 
 #include "torrent.h" // FileList
 
@@ -51,7 +55,7 @@ class FileTreeItem: public QObject
         int row( ) const;
         const QString& name( ) const { return myName; }
         QVariant data( int column ) const;
-        bool update( int index, bool want, int priority, uint64_t total, uint64_t have );
+        bool update( int index, bool want, int priority, uint64_t total, uint64_t have, bool torrentChanged );
         void twiddleWanted( QSet<int>& fileIds, bool& );
         void twiddlePriority( QSet<int>& fileIds, int& );
 
@@ -60,6 +64,7 @@ class FileTreeItem: public QObject
         void setSubtreeWanted( bool, QSet<int>& fileIds );
         QString priorityString( ) const;
         void getSubtreeSize( uint64_t& have, uint64_t& total ) const;
+        QString fileSizeName( ) const;
         double progress( ) const;
         int priority( ) const;
         int isSubtreeWanted( ) const;
@@ -101,7 +106,8 @@ class FileTreeModel: public QAbstractItemModel
         void addFile( int index, const QString& filename,
                       bool wanted, int priority,
                       uint64_t size, uint64_t have,
-                      QList<QModelIndex>& rowsAdded );
+                      QList<QModelIndex>& rowsAdded,
+                      bool torrentChanged );
 
     private:
         void clearSubtree( const QModelIndex & );
@@ -121,13 +127,12 @@ class FileTreeDelegate: public QItemDelegate
         Q_OBJECT
 
     public:
-
         FileTreeDelegate( QObject * parent=0 ): QItemDelegate( parent ) { }
         virtual ~FileTreeDelegate( ) { }
 
-        void paint( QPainter                   * painter,
-                    const QStyleOptionViewItem & option,
-                    const QModelIndex          & index ) const;
+    public:
+        virtual QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const;
+        virtual void paint(QPainter*, const QStyleOptionViewItem&, const QModelIndex&) const;
 };
 
 class FileTreeView: public QTreeView
@@ -136,9 +141,10 @@ class FileTreeView: public QTreeView
 
     public:
         FileTreeView( QWidget * parent=0 );
-        virtual ~FileTreeView( ) { }
+        virtual ~FileTreeView( );
         void clear( );
         void update( const FileList& files );
+        void update( const FileList& files, bool torrentChanged );
 
     signals:
         void priorityChanged( const QSet<int>& fileIndices, int );
@@ -149,7 +155,11 @@ class FileTreeView: public QTreeView
 
     private:
         FileTreeModel myModel;
+        QSortFilterProxyModel * myProxy;
         FileTreeDelegate myDelegate;
+
+    public slots:
+        void onClicked ( const QModelIndex & index );
 };
 
 #endif

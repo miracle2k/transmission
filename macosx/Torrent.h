@@ -47,7 +47,7 @@
     NSIndexSet * fPreviousFinishedIndexes;
     NSDate * fPreviousFinishedIndexesDate;
     
-    BOOL fFinishedSeeding, fWaitToStart, fStalled;
+    BOOL fWaitToStart, fStalled;
     
     NSInteger fGroupValue;
     
@@ -95,8 +95,12 @@
 - (void) setRatioSetting: (tr_ratiolimit) setting;
 - (CGFloat) ratioLimit;
 - (void) setRatioLimit: (CGFloat) limit;
-- (BOOL) seedRatioSet;
 - (CGFloat) progressStopRatio;
+
+- (tr_idlelimit) idleSetting;
+- (void) setIdleSetting: (tr_idlelimit) setting;
+- (NSUInteger) idleLimitMinutes;
+- (void) setIdleLimitMinutes: (NSUInteger) limit;
 
 - (BOOL) usesSpeedLimit: (BOOL) upload;
 - (void) setUseSpeedLimit: (BOOL) use upload: (BOOL) upload;
@@ -151,8 +155,6 @@
 - (CGFloat) progressLeft;
 - (CGFloat) checkingProgress;
 
-- (NSInteger) eta;
-
 - (CGFloat) availableDesired;
 
 - (BOOL) isActive;
@@ -161,6 +163,7 @@
 - (BOOL) isCheckingWaiting;
 - (BOOL) allDownloaded;
 - (BOOL) isComplete;
+- (BOOL) isFinishedSeeding;
 - (BOOL) isError;
 - (BOOL) isAnyErrorOrWarning;
 - (NSString *) errorMessage;
@@ -182,6 +185,7 @@
 - (NSInteger) totalPeersCache;
 - (NSInteger) totalPeersPex;
 - (NSInteger) totalPeersDHT;
+- (NSInteger) totalPeersLocal;
 - (NSInteger) totalPeersLTEP;
 - (NSInteger) totalPeersKnown;
 

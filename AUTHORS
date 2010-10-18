@@ -7,13 +7,15 @@ Lead Developers <dev@transmissionbt.com>
   Kevin Glowacz <kjg@transmissionbt.com> (Web client)
 
 Project Contributors
-  Tomas Carnecky  (Profiling, patches, and detection of sneaky bugs)
+  John Clay <john@transmissionbt.com> (Website maintenance and troubleshooting, Mac OS X help documentation)
   Juliusz Chroboczek  (DHT, network code, BitTorrent code improvements)
-  John Clay  (Website maintenance and troubleshooting)
-  Rashid Eissing  (Mac OS X Transfers preferences icon)
-  Hugo van Heuven, madebysofa  (Main icon design)
+  Daniel Lee (Patches)
+  Tomas Carnecky  (Profiling, patches, and detection of sneaky bugs)
+  Diego Jiménez (Patches)
   Kendall Hopkins <SoftwareElves@gmail.com>  (Web client)
   Malcolm Jarvis <mjarvis@transmissionbt.com>  (Web client)
+  Rashid Eissing  (Mac OS X Transfers preferences icon)
+  Hugo van Heuven, madebysofa  (Main icon design)
   Rick Patrick  (Mac OS X images)
   Jonas Rask  (Mac OS X Globe icon)
   Erick Turnquist  (IPv6 code, support)
@@ -31,10 +33,10 @@ Mac OS X Translators, current release:
   Anton Sotkov  (Russian)
   Alexander Bykov  (Russian)
   Maarten Van Coile  (Dutch)
-  Jack Lin  (Traditional Chinese)
-  Guilherme Fernandes  (Portuguese)
+  Guilherme Fernandes  (Brazilian Portuguese)
   Sven-S. Porst  (German)
   Tianhao He  (Simplified Chinese)
+  Sérgio Miranda  (European Portuguese)
 
 GTK+ Translators:
   Hundreds of people in an ever-changing list.

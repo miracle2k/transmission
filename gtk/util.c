@@ -12,6 +12,8 @@
 
 #include <ctype.h> /* isxdigit() */
 #include <errno.h>
+#include <math.h> /* pow() */
+#include <stdarg.h>
 #include <stdlib.h> /* free() */
 #include <string.h> /* strcmp() */
 
@@ -33,12 +35,39 @@
 
 #include <libtransmission/transmission.h> /* TR_RATIO_NA, TR_RATIO_INF */
 #include <libtransmission/utils.h> /* tr_inf */
+#include <libtransmission/web.h> /* tr_webResponseStr() */
 #include <libtransmission/version.h> /* tr_inf */
 
 #include "conf.h"
 #include "hig.h"
 #include "tr-prefs.h"
 #include "util.h"
+
+/***
+****  UNITS
+***/
+
+const int mem_K = 1024;
+const char * mem_K_str = N_("KiB");
+const char * mem_M_str = N_("MiB");
+const char * mem_G_str = N_("GiB");
+const char * mem_T_str = N_("TiB");
+
+const int disk_K = 1024;
+const char * disk_K_str = N_("KiB");
+const char * disk_M_str = N_("MiB");
+const char * disk_G_str = N_("GiB");
+const char * disk_T_str = N_("TiB");
+
+const int speed_K = 1024;
+const char * speed_K_str = N_("KiB/s");
+const char * speed_M_str = N_("MiB/s");
+const char * speed_G_str = N_("GiB/s");
+const char * speed_T_str = N_("TiB/s");
+
+/***
+****
+***/
 
 gtr_lockfile_state_t
 gtr_lockfile( const char * filename )
@@ -88,82 +117,56 @@ gtr_lockfile( const char * filename )
 ****
 ***/
 
+int
+gtr_compare_double( const double a, const double b, int decimal_places )
+{
+    const int64_t ia = (int64_t)(a * pow( 10, decimal_places ) );
+    const int64_t ib = (int64_t)(b * pow( 10, decimal_places ) );
+    if( ia < ib ) return -1;
+    if( ia > ib ) return  1; 
+    return 0;
+}
+
+/***
+****
+***/
+
+const char*
+gtr_get_unicode_string( int i )
+{
+    switch( i ) {
+        case GTR_UNICODE_UP:   return "\xE2\x86\x91";
+        case GTR_UNICODE_DOWN: return "\xE2\x86\x93";
+        case GTR_UNICODE_INF:  return "\xE2\x88\x9E";
+        default:               return "err";
+    }
+}
 
 char*
 tr_strlratio( char * buf, double ratio, size_t buflen )
 {
-    return tr_strratio( buf, buflen, ratio, "\xE2\x88\x9E" );
-}
-
-#define KILOBYTE_FACTOR 1024.0
-#define MEGABYTE_FACTOR ( 1024.0 * 1024.0 )
-#define GIGABYTE_FACTOR ( 1024.0 * 1024.0 * 1024.0 )
-
-char*
-tr_strlsize( char *  buf,
-             guint64 size,
-             size_t  buflen )
-{
-    if( !size )
-        g_strlcpy( buf, _( "None" ), buflen );
-#if GLIB_CHECK_VERSION( 2, 16, 0 )
-    else
-    {
-        char * tmp = g_format_size_for_display( size );
-        g_strlcpy( buf, tmp, buflen );
-        g_free( tmp );
-    }
-#else
-    else if( size < (guint64)KILOBYTE_FACTOR )
-        g_snprintf( buf, buflen,
-                    ngettext( "%'u byte", "%'u bytes",
-                              (guint)size ), (guint)size );
-    else
-    {
-        gdouble displayed_size;
-        if( size < (guint64)MEGABYTE_FACTOR )
-        {
-            displayed_size = (gdouble) size / KILOBYTE_FACTOR;
-            g_snprintf( buf, buflen, _( "%'.1f KB" ), displayed_size );
-        }
-        else if( size < (guint64)GIGABYTE_FACTOR )
-        {
-            displayed_size = (gdouble) size / MEGABYTE_FACTOR;
-            g_snprintf( buf, buflen, _( "%'.1f MB" ), displayed_size );
-        }
-        else
-        {
-            displayed_size = (gdouble) size / GIGABYTE_FACTOR;
-            g_snprintf( buf, buflen, _( "%'.1f GB" ), displayed_size );
-        }
-    }
-#endif
-    return buf;
+    return tr_strratio( buf, buflen, ratio, gtr_get_unicode_string( GTR_UNICODE_INF ) );
 }
 
 char*
-tr_strlspeed( char * buf,
-              double kb_sec,
-              size_t buflen )
+tr_strlpercent( char * buf, double x, size_t buflen )
 {
-    const double speed = kb_sec;
+    return tr_strpercent( buf, x, buflen );
+}
 
-    if( speed < 1000.0 )  /* 0.0 KB to 999.9 KB */
-        g_snprintf( buf, buflen, _( "%'.1f KB/s" ), speed );
-    else if( speed < 102400.0 ) /* 0.98 MB to 99.99 MB */
-        g_snprintf( buf, buflen, _( "%'.2f MB/s" ), ( speed / KILOBYTE_FACTOR ) );
-    else if( speed < 1024000.0 ) /* 100.0 MB to 999.9 MB */
-        g_snprintf( buf, buflen, _( "%'.1f MB/s" ), ( speed / MEGABYTE_FACTOR ) );
-    else /* insane speeds */
-        g_snprintf( buf, buflen, _( "%'.2f GB/s" ), ( speed / GIGABYTE_FACTOR ) );
+char*
+tr_strlsize( char * buf, guint64 bytes, size_t buflen )
+{
+    if( !bytes )
+        g_strlcpy( buf, Q_( "size|None" ), buflen );
+    else
+        tr_formatter_size_B( buf, bytes, buflen );
 
     return buf;
 }
 
 char*
-tr_strltime( char * buf,
-             int    seconds,
-             size_t buflen )
+tr_strltime( char * buf, int seconds, size_t buflen )
 {
     int  days, hours, minutes;
     char d[128], h[128], m[128], s[128];
@@ -176,14 +179,10 @@ tr_strltime( char * buf,
     minutes = ( seconds % 3600 ) / 60;
     seconds = ( seconds % 3600 ) % 60;
 
-    g_snprintf( d, sizeof( d ), ngettext( "%'d day", "%'d days",
-                                          days ), days );
-    g_snprintf( h, sizeof( h ), ngettext( "%'d hour", "%'d hours",
-                                          hours ), hours );
-    g_snprintf( m, sizeof( m ),
-                ngettext( "%'d minute", "%'d minutes", minutes ), minutes );
-    g_snprintf( s, sizeof( s ),
-                ngettext( "%'d second", "%'d seconds", seconds ), seconds );
+    g_snprintf( d, sizeof( d ), gtr_ngettext( "%'d day", "%'d days", days ), days );
+    g_snprintf( h, sizeof( h ), gtr_ngettext( "%'d hour", "%'d hours", hours ), hours );
+    g_snprintf( m, sizeof( m ), gtr_ngettext( "%'d minute", "%'d minutes", minutes ), minutes );
+    g_snprintf( s, sizeof( s ), gtr_ngettext( "%'d second", "%'d seconds", seconds ), seconds );
 
     if( days )
     {
@@ -239,15 +238,6 @@ gtr_localtime( time_t time )
     return g_locale_to_utf8( buf, -1, NULL, NULL, NULL );
 }
 
-char *
-gtr_localtime2( char * buf, time_t time, size_t buflen )
-{
-    char * tmp = gtr_localtime( time );
-    g_strlcpy( buf, tmp, buflen );
-    g_free( tmp );
-    return buf;
-}
-
 int
 gtr_mkdir_with_parents( const char * path, int mode )
 {
@@ -258,69 +248,27 @@ gtr_mkdir_with_parents( const char * path, int mode )
 #endif
 }
 
-GSList *
-dupstrlist( GSList * l )
+/* pattern-matching text; ie, legaltorrents.com */
+char*
+gtr_get_host_from_url( const char * url )
 {
-    GSList * ret = NULL;
+    char * h = NULL;
+    char * name;
+    const char * first_dot;
+    const char * last_dot;
 
-    for( ; l != NULL; l = l->next )
-        ret = g_slist_prepend( ret, g_strdup( l->data ) );
-    return g_slist_reverse( ret );
+    tr_urlParse( url, -1, NULL, &h, NULL, NULL );
+    first_dot = strchr( h, '.' );
+    last_dot = strrchr( h, '.' );
+
+    if( ( first_dot ) && ( last_dot ) && ( first_dot != last_dot ) )
+        name = g_strdup( first_dot + 1 );
+    else
+        name = g_strdup( h );
+
+    tr_free( h );
+    return name;
 }
-
-char *
-joinstrlist( GSList *list,
-             char *  sep )
-{
-    GSList * l;
-    GString *gstr = g_string_new ( NULL );
-
-    for( l = list; l != NULL; l = l->next )
-    {
-        g_string_append ( gstr, (char*)l->data );
-        if( l->next != NULL )
-            g_string_append ( gstr, ( sep ) );
-    }
-    return g_string_free ( gstr, FALSE );
-}
-
-void
-freestrlist( GSList *list )
-{
-    g_slist_foreach ( list, (GFunc)g_free, NULL );
-    g_slist_free ( list );
-}
-
-char *
-decode_uri( const char * uri )
-{
-    gboolean in_query = FALSE;
-    char *   ret = g_new( char, strlen( uri ) + 1 );
-    char *   out = ret;
-
-    for( ; uri && *uri; )
-    {
-        char ch = *uri;
-        if( ch == '?' )
-            in_query = TRUE;
-        else if( ch == '+' && in_query )
-            ch = ' ';
-        else if( ch == '%' && isxdigit( (unsigned char)uri[1] )
-               && isxdigit( (unsigned char)uri[2] ) )
-        {
-            char buf[3] = { uri[1], uri[2], '\0' };
-            ch = (char) g_ascii_strtoull( buf, NULL, 16 );
-            uri += 2;
-        }
-
-        ++uri;
-        *out++ = ch;
-    }
-
-    *out = '\0';
-    return ret;
-}
-
 
 gboolean
 gtr_is_supported_url( const char * str )
@@ -454,7 +402,7 @@ on_tree_view_button_released( GtkWidget *      view,
 }
 
 gpointer
-tr_object_ref_sink( gpointer object )
+gtr_object_ref_sink( gpointer object )
 {
 #if GLIB_CHECK_VERSION( 2, 10, 0 )
     g_object_ref_sink( object );
@@ -466,9 +414,34 @@ tr_object_ref_sink( gpointer object )
 }
 
 int
-tr_file_trash_or_remove( const char * filename )
+gtr_strcmp0( const char * str1, const char * str2 )
 {
-    if( filename && *filename )
+#if GLIB_CHECK_VERSION( 2, 16, 0 )
+    return g_strcmp0( str1, str2 );
+#else
+    if( str1 && str2 ) return strcmp( str1, str2 );
+    if( str1 ) return 1;
+    if( str2 ) return -1;
+    return 0;
+#endif
+}
+
+const gchar *
+gtr_ngettext( const gchar * msgid,
+              const gchar * msgid_plural,
+              gulong n )
+{
+#if GLIB_CHECK_VERSION( 2, 18, 0 )
+    return g_dngettext( NULL, msgid, msgid_plural, n );
+#else
+    return ngettext( msgid, msgid_plural, n );
+#endif
+}
+
+int
+gtr_file_trash_or_remove( const char * filename )
+{
+    if( filename && g_file_test( filename, G_FILE_TEST_EXISTS ) )
     {
         gboolean trashed = FALSE;
 #ifdef HAVE_GIO
@@ -491,43 +464,65 @@ tr_file_trash_or_remove( const char * filename )
     return 0;
 }
 
-char*
-gtr_get_help_url( void )
+const char*
+gtr_get_help_uri( void )
 {
-    const char * fmt = "http://www.transmissionbt.com/help/gtk/%d.%dx";
-    int          major, minor;
+    static char * uri = NULL;
 
-    sscanf( SHORT_VERSION_STRING, "%d.%d", &major, &minor );
-    return g_strdup_printf( fmt, major, minor / 10 );
+    if( !uri )
+    {
+        int major, minor;
+        const char * fmt = "http://www.transmissionbt.com/help/gtk/%d.%dx";
+        sscanf( SHORT_VERSION_STRING, "%d.%d", &major, &minor );
+        uri = g_strdup_printf( fmt, major, minor / 10 );
+    }
+
+    return uri;
 }
 
 void
 gtr_open_file( const char * path )
 {
-    if( path )
+    char * uri = NULL;
+
+#ifdef HAVE_GIO
+    GFile * file = g_file_new_for_path( path );
+    uri = g_file_get_uri( file );
+    g_object_unref( G_OBJECT( file ) );
+#else
+    if( g_path_is_absolute( path ) )
+        uri = g_strdup_printf( "file://%s", path );
+    else {
+        char * cwd = g_get_current_dir();
+        uri = g_strdup_printf( "file://%s/%s", cwd, path );
+        g_free( cwd );
+    }
+#endif
+
+    gtr_open_uri( uri );
+    g_free( uri );
+}
+
+void
+gtr_open_uri( const char * uri )
+{
+    if( uri )
     {
         gboolean opened = FALSE;
+
 #ifdef HAVE_GIO
         if( !opened )
-        {
-            GFile * file = g_file_new_for_path( path );
-            char *  uri = g_file_get_uri( file );
             opened = g_app_info_launch_default_for_uri( uri, NULL, NULL );
-            g_free( uri );
-            g_object_unref( G_OBJECT( file ) );
-        }
 #endif
-        if( !opened )
-        {
-            char * argv[] = { (char*)"xdg-open", (char*)path, NULL };
+
+        if( !opened ) {
+            char * argv[] = { (char*)"xdg-open", (char*)uri, NULL };
             opened = g_spawn_async( NULL, argv, NULL, G_SPAWN_SEARCH_PATH,
                                     NULL, NULL, NULL, NULL );
         }
 
         if( !opened )
-        {
-            g_message( "Unable to open \"%s\"", path );
-        }
+            g_message( "Unable to open \"%s\"", uri );
     }
 }
 
@@ -620,34 +615,21 @@ gtr_dbus_present_window( void )
     return success;
 }
 
-GtkWidget *
-gtr_button_new_from_stock( const char * stock,
-                           const char * mnemonic )
-{
-    GtkWidget * image = gtk_image_new_from_stock( stock,
-                                                  GTK_ICON_SIZE_BUTTON );
-    GtkWidget * button = gtk_button_new_with_mnemonic( mnemonic );
-
-    gtk_button_set_image( GTK_BUTTON( button ), image );
-    return button;
-}
-
 /***
 ****
 ***/
 
 void
-gtr_priority_combo_set_value( GtkWidget * w, tr_priority_t value )
+gtr_combo_box_set_active_enum( GtkComboBox * combo_box, int value )
 {
     int i;
     int currentValue;
     const int column = 0;
     GtkTreeIter iter;
-    GtkComboBox * combobox = GTK_COMBO_BOX( w );
-    GtkTreeModel * model = gtk_combo_box_get_model( combobox );
+    GtkTreeModel * model = gtk_combo_box_get_model( combo_box );
 
     /* do the value and current value match? */
-    if( gtk_combo_box_get_active_iter( combobox, &iter ) ) {
+    if( gtk_combo_box_get_active_iter( combo_box, &iter ) ) {
         gtk_tree_model_get( model, &iter, column, &currentValue, -1 );
         if( currentValue == value )
             return;
@@ -658,18 +640,49 @@ gtr_priority_combo_set_value( GtkWidget * w, tr_priority_t value )
     while(( gtk_tree_model_iter_nth_child( model, &iter, NULL, i++ ))) {
         gtk_tree_model_get( model, &iter, column, &currentValue, -1 );
         if( currentValue == value ) {
-            gtk_combo_box_set_active_iter( combobox, &iter );
+            gtk_combo_box_set_active_iter( combo_box, &iter );
             return;
         }
     }
 }
- 
-tr_priority_t
-gtr_priority_combo_get_value( GtkWidget * w )
+
+
+GtkWidget *
+gtr_combo_box_new_enum( const char * text_1, ... )
+{
+    GtkWidget * w;
+    GtkCellRenderer * r;
+    GtkListStore * store;
+    va_list vl;
+    const char * text;
+    va_start( vl, text_1 );
+
+    store = gtk_list_store_new( 2, G_TYPE_INT, G_TYPE_STRING );
+
+    text = text_1;
+    if( text != NULL ) do
+    {
+        const int val = va_arg( vl, int );
+        gtk_list_store_insert_with_values( store, NULL, INT_MAX, 0, val, 1, text, -1 );
+        text = va_arg( vl, const char * );
+    }
+    while( text != NULL );
+
+    w = gtk_combo_box_new_with_model( GTK_TREE_MODEL( store ) );
+    r = gtk_cell_renderer_text_new( );
+    gtk_cell_layout_pack_start( GTK_CELL_LAYOUT( w ), r, TRUE );
+    gtk_cell_layout_set_attributes( GTK_CELL_LAYOUT( w ), r, "text", 1, NULL );
+
+    /* cleanup */
+    g_object_unref( store );
+    return w;
+}
+
+int
+gtr_combo_box_get_active_enum( GtkComboBox * combo_box )
 {
     int value = 0;
     GtkTreeIter iter;
-    GtkComboBox * combo_box = GTK_COMBO_BOX( w );
 
     if( gtk_combo_box_get_active_iter( combo_box, &iter ) )
         gtk_tree_model_get( gtk_combo_box_get_model( combo_box ), &iter, 0, &value, -1 );
@@ -680,36 +693,10 @@ gtr_priority_combo_get_value( GtkWidget * w )
 GtkWidget *
 gtr_priority_combo_new( void )
 {
-    int i;
-    GtkWidget * w;
-    GtkCellRenderer * r;
-    GtkListStore * store;
-    const struct {
-        int value;
-        const char * text;
-    } items[] = {
-        { TR_PRI_HIGH,   N_( "High" )  },
-        { TR_PRI_NORMAL, N_( "Normal" ) },
-        { TR_PRI_LOW,    N_( "Low" )  }
-    };
-
-    store = gtk_list_store_new( 2, G_TYPE_INT, G_TYPE_STRING );
-    for( i=0; i<(int)G_N_ELEMENTS(items); ++i ) {
-        GtkTreeIter iter;
-        gtk_list_store_append( store, &iter );
-        gtk_list_store_set( store, &iter, 0, items[i].value,
-                                          1, _( items[i].text ),
-                                         -1 );
-    }
-
-    w = gtk_combo_box_new_with_model( GTK_TREE_MODEL( store ) );
-    r = gtk_cell_renderer_text_new( );
-    gtk_cell_layout_pack_start( GTK_CELL_LAYOUT( w ), r, TRUE );
-    gtk_cell_layout_set_attributes( GTK_CELL_LAYOUT( w ), r, "text", 1, NULL );
-
-    /* cleanup */
-    g_object_unref( store );
-    return w;
+    return gtr_combo_box_new_enum( _( "High" ),   TR_PRI_HIGH,
+                                   _( "Normal" ), TR_PRI_NORMAL,
+                                   _( "Low" ),    TR_PRI_LOW,
+                                   NULL );
 }
 
 /***
@@ -729,6 +716,29 @@ gtr_widget_set_tooltip_text( GtkWidget * w, const char * tip )
 #endif
 }
 
+gboolean
+gtr_widget_get_realized( GtkWidget * w )
+{
+#if GTK_CHECK_VERSION( 2,20,0 )
+    return gtk_widget_get_realized( w );
+#else
+    return GTK_WIDGET_REALIZED( w ) != 0;
+#endif
+}
+
+void
+gtr_widget_set_visible( GtkWidget * w, gboolean b )
+{
+#if GTK_CHECK_VERSION( 2,18,0 )
+    gtk_widget_set_visible( w, b );
+#else
+    if( b )
+        gtk_widget_show( w );
+    else
+        gtk_widget_hide( w );
+#endif
+}
+
 void
 gtr_toolbar_set_orientation( GtkToolbar      * toolbar,
                              GtkOrientation    orientation )
@@ -739,6 +749,7 @@ gtr_toolbar_set_orientation( GtkToolbar      * toolbar,
     gtk_toolbar_set_orientation( toolbar, orientation );
 #endif
 }
+
 
 /***
 ****
@@ -818,6 +829,25 @@ gtr_timeout_add_seconds( guint seconds, GSourceFunc function, gpointer data )
 }
 
 void
+gtr_http_failure_dialog( GtkWidget * parent, const char * url, long response_code )
+{
+    GtkWindow * window = getWindow( parent );
+
+    GtkWidget * w = gtk_message_dialog_new( window, 0,
+                                            GTK_MESSAGE_ERROR,
+                                            GTK_BUTTONS_CLOSE,
+                                            _( "Error opening \"%s\"" ), url );
+
+    gtk_message_dialog_format_secondary_text( GTK_MESSAGE_DIALOG( w ),
+                                              _( "Server returned \"%1$ld %2$s\"" ),
+                                              response_code,
+                                              tr_webGetResponseStr( response_code ) );
+
+    g_signal_connect_swapped( w, "response", G_CALLBACK( gtk_widget_destroy ), w );
+    gtk_widget_show( w );
+}
+
+void
 gtr_unrecognized_url_dialog( GtkWidget * parent, const char * url )
 {
     const char * xt = "xt=urn:btih";
@@ -836,7 +866,7 @@ gtr_unrecognized_url_dialog( GtkWidget * parent, const char * url )
     if( gtr_is_magnet_link( url ) && ( strstr( url, xt ) == NULL ) )
     {
         g_string_append_printf( gstr, "\n \n" );
-        g_string_append_printf( gstr, _( "This magnet link appears to be intended for something other than BitTorrent.  BitTorrent magnet links have a section containing \"%s\"." ), xt ); 
+        g_string_append_printf( gstr, _( "This magnet link appears to be intended for something other than BitTorrent.  BitTorrent magnet links have a section containing \"%s\"." ), xt );
     }
 
     gtk_message_dialog_format_secondary_text( GTK_MESSAGE_DIALOG( w ), "%s", gstr->str );

@@ -23,21 +23,24 @@
  *****************************************************************************/
 
 #import <Cocoa/Cocoa.h>
+#import "InfoViewController.h"
 
-@interface InfoOptionsViewController : NSViewController
+@interface InfoOptionsViewController : NSViewController <InfoViewController>
 {
     NSArray * fTorrents;
     
-    IBOutlet NSPopUpButton * fPriorityPopUp, * fRatioPopUp;
+    BOOL fSet;
+    
+    IBOutlet NSPopUpButton * fPriorityPopUp, * fRatioPopUp, * fIdlePopUp;
     IBOutlet NSButton * fUploadLimitCheck, * fDownloadLimitCheck, * fGlobalLimitCheck;
-    IBOutlet NSTextField * fUploadLimitField, * fDownloadLimitField, * fRatioLimitField,
-                        * fUploadLimitLabel, * fDownloadLimitLabel, * fPeersConnectLabel,
-                        * fPeersConnectField;
+    IBOutlet NSTextField * fUploadLimitField, * fDownloadLimitField, * fRatioLimitField, * fIdleLimitField,
+                        * fUploadLimitLabel, * fDownloadLimitLabel, * fIdleLimitLabel, * fPeersConnectLabel, * fPeersConnectField;
     
     NSString * fInitialString;
 }
 
 - (void) setInfoForTorrents: (NSArray *) torrents;
+- (void) updateInfo;
 - (void) updateOptions;
 
 - (void) setUseSpeedLimit: (id) sender;
@@ -46,6 +49,9 @@
 
 - (void) setRatioSetting: (id) sender;
 - (void) setRatioLimit: (id) sender;
+
+- (void) setIdleSetting: (id) sender;
+- (void) setIdleLimit: (id) sender;
 
 - (void) setPriority: (id) sender;
 

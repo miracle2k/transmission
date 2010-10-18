@@ -77,6 +77,14 @@ tr_upnpClose( tr_upnp * handle )
 ***
 **/
 
+enum
+{
+  UPNP_IGD_NONE = 0,
+  UPNP_IGD_VALID_CONNECTED = 1,
+  UPNP_IGD_VALID_NOT_CONNECTED = 2,
+  UPNP_IGD_INVALID = 3
+};
+
 int
 tr_upnpPulse( tr_upnp * handle,
               int       port,
@@ -98,7 +106,7 @@ tr_upnpPulse( tr_upnp * handle,
         }
         errno = 0;
         if( UPNP_GetValidIGD( devlist, &handle->urls, &handle->data,
-                             handle->lanaddr, sizeof( handle->lanaddr ) ) )
+                             handle->lanaddr, sizeof( handle->lanaddr ) ) == UPNP_IGD_VALID_CONNECTED )
         {
             tr_ninf( getKey( ), _(
                          "Found Internet Gateway Device \"%s\"" ),
@@ -137,7 +145,7 @@ tr_upnpPulse( tr_upnp * handle,
 
         tr_snprintf( portStr, sizeof( portStr ), "%d", handle->port );
         i = UPNP_GetSpecificPortMappingEntry( handle->urls.controlURL,
-                                              handle->data.servicetype, portStr,
+                                              handle->data.first.servicetype, portStr,
                                               "TCP", intClient, intPort );
         if( i != UPNPCOMMAND_SUCCESS )
         {
@@ -151,12 +159,12 @@ tr_upnpPulse( tr_upnp * handle,
         char portStr[16];
         tr_snprintf( portStr, sizeof( portStr ), "%d", handle->port );
         UPNP_DeletePortMapping( handle->urls.controlURL,
-                                handle->data.servicetype,
+                                handle->data.first.servicetype,
                                 portStr, "TCP", NULL );
         tr_ninf( getKey( ),
                  _(
                      "Stopping port forwarding through \"%s\", service \"%s\"" ),
-                 handle->urls.controlURL, handle->data.servicetype );
+                 handle->urls.controlURL, handle->data.first.servicetype );
         handle->isMapped = 0;
         handle->state = TR_UPNP_IDLE;
         handle->port = -1;
@@ -173,7 +181,7 @@ tr_upnpPulse( tr_upnp * handle,
         int  err = -1;
         errno = 0;
 
-        if( !handle->urls.controlURL || !handle->data.servicetype )
+        if( !handle->urls.controlURL || !handle->data.first.servicetype )
             handle->isMapped = 0;
         else
         {
@@ -182,7 +190,7 @@ tr_upnpPulse( tr_upnp * handle,
             tr_snprintf( portStr, sizeof( portStr ), "%d", port );
             tr_snprintf( desc, sizeof( desc ), "%s at %d", TR_NAME, port );
             err = UPNP_AddPortMapping( handle->urls.controlURL,
-                                       handle->data.servicetype,
+                                       handle->data.first.servicetype,
                                        portStr, portStr, handle->lanaddr,
                                        desc, "TCP", NULL );
             handle->isMapped = !err;
@@ -190,7 +198,7 @@ tr_upnpPulse( tr_upnp * handle,
         tr_ninf( getKey( ),
                  _(
                      "Port forwarding through \"%s\", service \"%s\".  (local address: %s:%d)" ),
-                 handle->urls.controlURL, handle->data.servicetype,
+                 handle->urls.controlURL, handle->data.first.servicetype,
                  handle->lanaddr, port );
         if( handle->isMapped )
         {

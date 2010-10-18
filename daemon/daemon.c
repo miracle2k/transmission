@@ -1,11 +1,11 @@
 /*
  * This file Copyright (C) 2008-2010 Mnemosyne LLC
  *
- * This file is licensed by the GPL version 2.  Works owned by the
- * Transmission project are granted a special exemption to clause 2(b)
- * so that the bulk of its code can remain under the MIT license.
- * This exemption does not extend to derived works not owned by
- * the Transmission project.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2
+ * as published by the Free Software Foundation.
+ *
+ * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
  *
  * $Id$
  */
@@ -39,6 +39,27 @@
 
 #define PREF_KEY_DIR_WATCH          "watch-dir"
 #define PREF_KEY_DIR_WATCH_ENABLED  "watch-dir-enabled"
+#define PREF_KEY_PIDFILE            "pidfile"
+
+#define MEM_K 1024
+#define MEM_K_STR "KiB"
+#define MEM_M_STR "MiB"
+#define MEM_G_STR "GiB"
+#define MEM_T_STR "TiB"
+
+#define DISK_K 1024
+#define DISK_B_STR   "B"
+#define DISK_K_STR "KiB"
+#define DISK_M_STR "MiB"
+#define DISK_G_STR "GiB"
+#define DISK_T_STR "TiB"
+
+#define SPEED_K 1024
+#define SPEED_B_STR   "B/s"
+#define SPEED_K_STR "KiB/s"
+#define SPEED_M_STR "MiB/s"
+#define SPEED_G_STR "GiB/s"
+#define SPEED_T_STR "TiB/s"
 
 static tr_bool paused = FALSE;
 static tr_bool closing = FALSE;
@@ -64,10 +85,11 @@ getUsage( void )
 
 static const struct tr_option options[] =
 {
+
     { 'a', "allowed", "Allowed IP addresses.  (Default: " TR_DEFAULT_RPC_WHITELIST ")", "a", 1, "<list>" },
     { 'b', "blocklist", "Enable peer blocklists", "b", 0, NULL },
     { 'B', "no-blocklist", "Disable peer blocklists", "B", 0, NULL },
-    { 'c', "watch-dir", "Directory to watch for new .torrent files", "c", 1, "<directory>" },
+    { 'c', "watch-dir", "Where to watch for new .torrent files", "c", 1, "<directory>" },
     { 'C', "no-watch-dir", "Disable the watch-dir", "C", 0, NULL },
     { 941, "incomplete-dir", "Where to store new torrents until they're complete", NULL, 1, "<directory>" },
     { 942, "no-incomplete-dir", "Don't store incomplete torrents in a different location", NULL, 0, NULL },
@@ -81,10 +103,15 @@ static const struct tr_option options[] =
     { 'u', "username", "Set username for authentication", "u", 1, "<username>" },
     { 'v', "password", "Set password for authentication", "v", 1, "<password>" },
     { 'V', "version", "Show version number and exit", "V", 0, NULL },
+    { 810, "log-error", "Show error messages", NULL, 0, NULL },
+    { 811, "log-info", "Show error and info messages", NULL, 0, NULL },
+    { 812, "log-debug", "Show error, info, and debug messages", NULL, 0, NULL },
     { 'w', "download-dir", "Where to save downloaded data", "w", 1, "<path>" },
     { 800, "paused", "Pause all torrents on startup", NULL, 0, NULL },
     { 'o', "dht", "Enable distributed hash tables (DHT)", "o", 0, NULL },
     { 'O', "no-dht", "Disable distributed hash tables (DHT)", "O", 0, NULL },
+    { 'y', "lpd", "Enable local peer discovery (LPD)", "y", 0, NULL },
+    { 'Y', "no-lpd", "Disable local peer discovery (LPD)", "Y", 0, NULL },
     { 'P', "peerport", "Port for incoming peers (Default: " TR_DEFAULT_PEER_PORT_STR ")", "P", 1, "<port>" },
     { 'm', "portmap", "Enable portmapping via NAT-PMP or UPnP", "m", 0, NULL },
     { 'M', "no-portmap", "Disable portmapping", "M", 0, NULL },
@@ -93,11 +120,12 @@ static const struct tr_option options[] =
     { 910, "encryption-required",  "Encrypt all peer connections", "er", 0, NULL },
     { 911, "encryption-preferred", "Prefer encrypted peer connections", "ep", 0, NULL },
     { 912, "encryption-tolerated", "Prefer unencrypted peer connections", "et", 0, NULL },
-    { 'i', "bind-address-ipv4", "Where to listen for peer connections", "i", 1, "<ipv4 address>" },
-    { 'I', "bind-address-ipv6", "Where to listen for peer connections", "I", 1, "<ipv6 address>" },
-    { 'r', "rpc-bind-address", "Where to listen for RPC connections", "r", 1, "<ipv4 address>" },
+    { 'i', "bind-address-ipv4", "Where to listen for peer connections", "i", 1, "<ipv4 addr>" },
+    { 'I', "bind-address-ipv6", "Where to listen for peer connections", "I", 1, "<ipv6 addr>" },
+    { 'r', "rpc-bind-address", "Where to listen for RPC connections", "r", 1, "<ipv4 addr>" },
     { 953, "global-seedratio", "All torrents, unless overridden by a per-torrent setting, should seed until a specific ratio", "gsr", 1, "ratio" },
     { 954, "no-global-seedratio", "All torrents, unless overridden by a per-torrent setting, should seed regardless of ratio", "GSR", 0, NULL },
+    { 'x', "pid-file", "Enable PID file", "x", 1, "<pid-file>" },
     { 0, NULL, NULL, NULL, 0, NULL }
 };
 
@@ -119,6 +147,7 @@ gotsig( int sig )
             const char * configDir = tr_sessionGetConfigDir( mySession );
             tr_inf( "Reloading settings from \"%s\"", configDir );
             tr_bencInitDict( &settings, 0 );
+            tr_bencDictAddBool( &settings, TR_PREFS_KEY_RPC_ENABLED, TRUE );
             tr_sessionLoadSettings( &settings, configDir, MY_NAME );
             tr_sessionSet( mySession, &settings );
             tr_bencFree( &settings );
@@ -217,18 +246,40 @@ getConfigDir( int argc, const char ** argv )
 static void
 onFileAdded( tr_session * session, const char * dir, const char * file )
 {
-    if( strstr( file, ".torrent" ) != NULL )
+    char * filename = tr_buildPath( dir, file, NULL );
+    tr_ctor * ctor = tr_ctorNew( session );
+    int err = tr_ctorSetMetainfoFromFile( ctor, filename );
+
+    if( !err )
     {
-        char * filename = tr_buildPath( dir, file, NULL );
-        tr_ctor * ctor = tr_ctorNew( session );
+        tr_torrentNew( ctor, &err );
 
-        int err = tr_ctorSetMetainfoFromFile( ctor, filename );
-        if( !err )
-            tr_torrentNew( ctor, &err );
+        if( err == TR_PARSE_ERR )
+            tr_err( "Error parsing .torrent file \"%s\"", file );
+        else
+        {
+            tr_bool trash = FALSE;
+            int test = tr_ctorGetDeleteSource( ctor, &trash );
 
-        tr_ctorFree( ctor );
-        tr_free( filename );
+            tr_inf( "Parsing .torrent file successful \"%s\"", file );
+
+            if( !test && trash )
+            {
+                tr_inf( "Deleting input .torrent file \"%s\"", file );
+                if( remove( filename ) )
+                    tr_err( "Error deleting .torrent file: %s", tr_strerror( errno ) );
+            }
+            else
+            {
+                char * new_filename = tr_strdup_printf( "%s.added", filename );
+                rename( filename, new_filename );
+                tr_free( new_filename );
+            }
+        }
     }
+
+    tr_ctorFree( ctor );
+    tr_free( filename );
 }
 
 static void
@@ -286,8 +337,10 @@ main( int argc, char ** argv )
     tr_bool foreground = FALSE;
     tr_bool dumpSettings = FALSE;
     const char * configDir = NULL;
+    const char * pid_filename;
     dtr_watchdir * watchdir = NULL;
     FILE * logfile = NULL;
+    tr_bool pidfile_created = FALSE;
 
     signal( SIGINT, gotsig );
     signal( SIGTERM, gotsig );
@@ -297,6 +350,7 @@ main( int argc, char ** argv )
 
     /* load settings from defaults + config file */
     tr_bencInitDict( &settings, 0 );
+    tr_bencDictAddBool( &settings, TR_PREFS_KEY_RPC_ENABLED, TRUE );
     configDir = getConfigDir( argc, (const char**)argv );
     loaded = tr_sessionLoadSettings( &settings, configDir, MY_NAME );
 
@@ -316,13 +370,11 @@ main( int argc, char ** argv )
                       break;
             case 'C': tr_bencDictAddBool( &settings, PREF_KEY_DIR_WATCH_ENABLED, FALSE );
                       break;
-	    case 941:
-        	      tr_bencDictAddStr( &settings, TR_PREFS_KEY_INCOMPLETE_DIR, optarg );
-		      tr_bencDictAddBool( &settings, TR_PREFS_KEY_INCOMPLETE_DIR_ENABLED, TRUE );
-		      break;
-	    case 942:
-		      tr_bencDictAddBool( &settings, TR_PREFS_KEY_INCOMPLETE_DIR_ENABLED, FALSE );
-		      break;
+            case 941: tr_bencDictAddStr( &settings, TR_PREFS_KEY_INCOMPLETE_DIR, optarg );
+                      tr_bencDictAddBool( &settings, TR_PREFS_KEY_INCOMPLETE_DIR_ENABLED, TRUE );
+                      break;
+            case 942: tr_bencDictAddBool( &settings, TR_PREFS_KEY_INCOMPLETE_DIR_ENABLED, FALSE );
+                      break;
             case 'd': dumpSettings = TRUE;
                       break;
             case 'e': logfile = fopen( optarg, "a+" );
@@ -333,15 +385,13 @@ main( int argc, char ** argv )
                       break;
             case 'g': /* handled above */
                       break;
-	    case 'V': /* version */
-		      fprintf(stderr, "Transmission %s\n", LONG_VERSION_STRING);
-		      exit( 0 );
-	    case 'o':
-		      tr_bencDictAddBool( &settings, TR_PREFS_KEY_DHT_ENABLED, TRUE );
-		      break;
-	    case 'O':
-		      tr_bencDictAddBool( &settings, TR_PREFS_KEY_DHT_ENABLED, FALSE );
-		      break;
+            case 'V': /* version */
+                      fprintf(stderr, "%s %s\n", MY_NAME, LONG_VERSION_STRING);
+                      exit( 0 );
+            case 'o': tr_bencDictAddBool( &settings, TR_PREFS_KEY_DHT_ENABLED, TRUE );
+                      break;
+            case 'O': tr_bencDictAddBool( &settings, TR_PREFS_KEY_DHT_ENABLED, FALSE );
+                      break;
             case 'p': tr_bencDictAddInt( &settings, TR_PREFS_KEY_RPC_PORT, atoi( optarg ) );
                       break;
             case 't': tr_bencDictAddBool( &settings, TR_PREFS_KEY_RPC_AUTH_REQUIRED, TRUE );
@@ -372,22 +422,29 @@ main( int argc, char ** argv )
                       break;
             case 912: tr_bencDictAddInt( &settings, TR_PREFS_KEY_ENCRYPTION, TR_CLEAR_PREFERRED );
                       break;
-            case 'i':
-                      tr_bencDictAddStr( &settings, TR_PREFS_KEY_BIND_ADDRESS_IPV4, optarg );
+            case 'i': tr_bencDictAddStr( &settings, TR_PREFS_KEY_BIND_ADDRESS_IPV4, optarg );
                       break;
-            case 'I':
-                      tr_bencDictAddStr( &settings, TR_PREFS_KEY_BIND_ADDRESS_IPV6, optarg );
+            case 'I': tr_bencDictAddStr( &settings, TR_PREFS_KEY_BIND_ADDRESS_IPV6, optarg );
                       break;
-            case 'r':
-                      tr_bencDictAddStr( &settings, TR_PREFS_KEY_RPC_BIND_ADDRESS, optarg );
+            case 'r': tr_bencDictAddStr( &settings, TR_PREFS_KEY_RPC_BIND_ADDRESS, optarg );
                       break;
-	    case 953:
-		      tr_bencDictAddReal( &settings, TR_PREFS_KEY_RATIO, atof(optarg) );
-		      tr_bencDictAddBool( &settings, TR_PREFS_KEY_RATIO_ENABLED, TRUE );
-		      break;
-	    case 954:
-		      tr_bencDictAddBool( &settings, TR_PREFS_KEY_RATIO_ENABLED, FALSE );
-		      break;
+            case 953: tr_bencDictAddReal( &settings, TR_PREFS_KEY_RATIO, atof(optarg) );
+                      tr_bencDictAddBool( &settings, TR_PREFS_KEY_RATIO_ENABLED, TRUE );
+                      break;
+            case 954: tr_bencDictAddBool( &settings, TR_PREFS_KEY_RATIO_ENABLED, FALSE );
+                      break;
+            case 'x': tr_bencDictAddStr( &settings, PREF_KEY_PIDFILE, optarg );
+                      break;
+            case 'y': tr_bencDictAddBool( &settings, TR_PREFS_KEY_LPD_ENABLED, TRUE );
+                      break;
+            case 'Y': tr_bencDictAddBool( &settings, TR_PREFS_KEY_LPD_ENABLED, FALSE );
+                      break;
+            case 810: tr_bencDictAddInt( &settings,  TR_PREFS_KEY_MSGLEVEL, TR_MSG_ERR );
+                      break;
+            case 811: tr_bencDictAddInt( &settings,  TR_PREFS_KEY_MSGLEVEL, TR_MSG_INF );
+                      break;
+            case 812: tr_bencDictAddInt( &settings,  TR_PREFS_KEY_MSGLEVEL, TR_MSG_DBG );
+                      break;
             default:  showUsage( );
                       break;
         }
@@ -419,9 +476,28 @@ main( int argc, char ** argv )
     }
 
     /* start the session */
+    tr_formatter_mem_init( MEM_K, MEM_K_STR, MEM_M_STR, MEM_G_STR, MEM_T_STR );
+    tr_formatter_size_init( DISK_K, DISK_K_STR, DISK_M_STR, DISK_G_STR, DISK_T_STR );
+    tr_formatter_speed_init( SPEED_K, SPEED_K_STR, SPEED_M_STR, SPEED_G_STR, SPEED_T_STR );
     mySession = tr_sessionInit( "daemon", configDir, TRUE, &settings );
     tr_ninf( NULL, "Using settings from \"%s\"", configDir );
     tr_sessionSaveSettings( mySession, configDir, &settings );
+
+    pid_filename = NULL;
+    tr_bencDictFindStr( &settings, PREF_KEY_PIDFILE, &pid_filename );
+    if( pid_filename && *pid_filename )
+    {
+        FILE * fp = fopen( pid_filename, "w+" );
+        if( fp != NULL )
+        {
+            fprintf( fp, "%d", (int)getpid() );
+            fclose( fp );
+            tr_inf( "Saved pidfile \"%s\"", pid_filename );
+            pidfile_created = TRUE;
+        }
+        else
+            tr_err( "Unable to save pidfile \"%s\": %s", pid_filename, strerror( errno ) );
+    }
 
     if( tr_bencDictFindBool( &settings, TR_PREFS_KEY_RPC_AUTH_REQUIRED, &boolVal ) && boolVal )
         tr_ninf( MY_NAME, "requiring authentication" );
@@ -454,7 +530,7 @@ main( int argc, char ** argv )
 
 #ifdef HAVE_SYSLOG
     if( !foreground )
-        openlog( MY_NAME, LOG_CONS, LOG_DAEMON );
+        openlog( MY_NAME, LOG_CONS|LOG_PID, LOG_DAEMON );
 #endif
 
     while( !closing ) {
@@ -479,6 +555,8 @@ main( int argc, char ** argv )
     printf( " done.\n" );
 
     /* cleanup */
+    if( pidfile_created )
+        remove( pid_filename );
     tr_bencFree( &settings );
     return 0;
 }

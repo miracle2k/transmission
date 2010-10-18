@@ -1,11 +1,11 @@
 /*
- * This file Copyright (C) 2009-2010 Mnemosyne LLC
+ * This file Copyright (C) Mnemosyne LLC
  *
- * This file is licensed by the GPL version 2.  Works owned by the
- * Transmission project are granted a special exemption to clause 2(b)
- * so that the bulk of its code can remain under the MIT license.
- * This exemption does not extend to derived works not owned by
- * the Transmission project.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2
+ * as published by the Free Software Foundation.
+ *
+ * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
  *
  * $Id$
  */
@@ -19,6 +19,7 @@
 #include <QSet>
 #include <QString>
 #include <QStyle>
+#include <QUrl>
 #include <QVariant>
 
 #include <libtransmission/transmission.h>
@@ -32,6 +33,7 @@
 
 
 Torrent :: Torrent( Prefs& prefs, int id ):
+    magnetTorrent( false ),
     myPrefs( prefs )
 {
     for( int i=0; i<PROPERTY_COUNT; ++i )
@@ -53,8 +55,8 @@ Torrent :: Property
 Torrent :: myProperties[] =
 {
     { ID, "id", QVariant::Int, INFO, },
-    { UPLOAD_SPEED, "rateUpload", QVariant::Int, STAT } /* B/s */,
-    { DOWNLOAD_SPEED, "rateDownload", QVariant::Int, STAT }, /* B/s */
+    { UPLOAD_SPEED, "rateUpload", QVariant::ULongLong, STAT } /* Bps */,
+    { DOWNLOAD_SPEED, "rateDownload", QVariant::ULongLong, STAT }, /* Bps */
     { DOWNLOAD_DIR, "downloadDir", QVariant::String, STAT },
     { ACTIVITY, "status", QVariant::Int, STAT },
     { NAME, "name", QVariant::String, INFO },
@@ -84,10 +86,13 @@ Torrent :: myProperties[] =
     { DOWNLOADED_EVER, "downloadedEver", QVariant::ULongLong, STAT },
     { UPLOADED_EVER, "uploadedEver", QVariant::ULongLong, STAT },
     { FAILED_EVER, "corruptEver", QVariant::ULongLong, STAT_EXTRA },
-    { TRACKERS, "trackers", QVariant::StringList, INFO },
+    { TRACKERS, "trackers", QVariant::StringList, STAT },
+    { TRACKERSTATS, "trackerStats", TrTypes::TrackerStatsList, STAT_EXTRA },
     { MIME_ICON, "ccc", QVariant::Icon, DERIVED },
-    { SEED_RATIO_LIMIT, "seedRatioLimit", QVariant::Double, STAT_EXTRA },
-    { SEED_RATIO_MODE, "seedRatioMode", QVariant::Int, STAT_EXTRA },
+    { SEED_RATIO_LIMIT, "seedRatioLimit", QVariant::Double, STAT },
+    { SEED_RATIO_MODE, "seedRatioMode", QVariant::Int, STAT },
+    { SEED_IDLE_LIMIT, "seedIdleLimit", QVariant::Int, STAT_EXTRA },
+    { SEED_IDLE_MODE, "seedIdleMode", QVariant::Int, STAT_EXTRA },
     { DOWN_LIMIT, "downloadLimit", QVariant::Int, STAT_EXTRA }, /* KB/s */
     { DOWN_LIMITED, "downloadLimited", QVariant::Bool, STAT_EXTRA },
     { UP_LIMIT, "uploadLimit", QVariant::Int, STAT_EXTRA }, /* KB/s */
@@ -95,17 +100,11 @@ Torrent :: myProperties[] =
     { HONORS_SESSION_LIMITS, "honorsSessionLimits", QVariant::Bool, STAT_EXTRA },
     { PEER_LIMIT, "peer-limit", QVariant::Int, STAT_EXTRA },
     { HASH_STRING, "hashString", QVariant::String, INFO },
+    { IS_FINISHED, "isFinished", QVariant::Bool, STAT },
     { IS_PRIVATE, "isPrivate", QVariant::Bool, INFO },
     { COMMENT, "comment", QVariant::String, INFO },
     { CREATOR, "creator", QVariant::String, INFO },
-    { LAST_ANNOUNCE_TIME, "lastAnnounceTime", QVariant::DateTime, STAT_EXTRA },
-    { LAST_SCRAPE_TIME, "lastScrapeTime", QVariant::DateTime, STAT_EXTRA },
     { MANUAL_ANNOUNCE_TIME, "manualAnnounceTime", QVariant::DateTime, STAT_EXTRA },
-    { NEXT_ANNOUNCE_TIME, "nextAnnounceTime", QVariant::DateTime, STAT_EXTRA },
-    { NEXT_SCRAPE_TIME, "nextScrapeTime", QVariant::DateTime, STAT_EXTRA },
-    { SCRAPE_RESPONSE, "scrapeResponse", QVariant::String, STAT_EXTRA },
-    { ANNOUNCE_RESPONSE, "announceResponse", QVariant::String, STAT_EXTRA },
-    { ANNOUNCE_URL, "announceURL", QVariant::String, STAT_EXTRA },
     { PEERS, "peers", TrTypes::PeerList, STAT_EXTRA },
     { TORRENT_FILE, "torrentFile", QVariant::String, STAT_EXTRA },
     { BANDWIDTH_PRIORITY, "bandwidthPriority", QVariant::Int, STAT_EXTRA }
@@ -343,7 +342,7 @@ Torrent :: getSeedRatio( double& ratio ) const
                 ratio = myPrefs.getDouble( Prefs :: RATIO );
             break;
 
-        case TR_RATIOLIMIT_UNLIMITED:
+        default: // TR_RATIOLIMIT_UNLIMITED:
             isLimited = false;
             break;
     }
@@ -388,8 +387,8 @@ Torrent :: compareETA( const Torrent& that ) const
     const bool haveA( hasETA( ) );
     const bool haveB( that.hasETA( ) );
     if( haveA && haveB ) return getETA() - that.getETA();
-    if( haveA ) return -1;
-    if( haveB ) return 1;
+    if( haveA ) return 1;
+    if( haveB ) return -1;
     return 0;
 }
 
@@ -546,13 +545,84 @@ Torrent :: update( tr_benc * d )
         int i = 0;
         QStringList list;
         tr_benc * child;
-        while(( child = tr_bencListChild( trackers, i++ )))
-            if( tr_bencDictFindStr( child, "announce", &str ))
+        while(( child = tr_bencListChild( trackers, i++ ))) {
+            if( tr_bencDictFindStr( child, "announce", &str )) {
+                dynamic_cast<MyApp*>(QApplication::instance())->favicons.add( QUrl(str) );
                 list.append( QString::fromUtf8( str ) );
+            }
+        }
         if( myValues[TRACKERS] != list ) {
             myValues[TRACKERS].setValue( list );
             changed = true;
         }
+    }
+
+    tr_benc * trackerStats;
+    if( tr_bencDictFindList( d, "trackerStats", &trackerStats ) ) {
+        tr_benc * child;
+        TrackerStatsList  trackerStatsList;
+        int childNum = 0;
+        while(( child = tr_bencListChild( trackerStats, childNum++ ))) {
+            tr_bool b;
+            int64_t i;
+            const char * str;
+            TrackerStat trackerStat;
+            if( tr_bencDictFindStr( child, "announce", &str ) ) {
+                trackerStat.announce = QString::fromUtf8( str );
+                dynamic_cast<MyApp*>(QApplication::instance())->favicons.add( QUrl( trackerStat.announce ) );
+            }
+            if( tr_bencDictFindInt( child, "announceState", &i ) )
+                trackerStat.announceState = i;
+            if( tr_bencDictFindInt( child, "downloadCount", &i ) )
+                trackerStat.downloadCount = i;
+            if( tr_bencDictFindBool( child, "hasAnnounced", &b ) )
+                trackerStat.hasAnnounced = b;
+            if( tr_bencDictFindBool( child, "hasScraped", &b ) )
+                trackerStat.hasScraped = b;
+            if( tr_bencDictFindStr( child, "host", &str ) )
+                trackerStat.host = QString::fromUtf8( str );
+            if( tr_bencDictFindInt( child, "id", &i ) )
+                trackerStat.id = i;
+            if( tr_bencDictFindBool( child, "isBackup", &b ) )
+                trackerStat.isBackup = b;
+            if( tr_bencDictFindInt( child, "lastAnnouncePeerCount", &i ) )
+                trackerStat.lastAnnouncePeerCount = i;
+            if( tr_bencDictFindStr( child, "lastAnnounceResult", &str ) )
+                trackerStat.lastAnnounceResult = str;
+            if( tr_bencDictFindInt( child, "lastAnnounceStartTime", &i ) )
+                trackerStat.lastAnnounceStartTime = i;
+            if( tr_bencDictFindBool( child, "lastAnnounceSucceeded", &b ) )
+                trackerStat.lastAnnounceSucceeded = b;
+            if( tr_bencDictFindInt( child, "lastAnnounceTime", &i ) )
+                trackerStat.lastAnnounceTime = i;
+            if( tr_bencDictFindBool( child, "lastAnnounceTimedOut", &b ) )
+                trackerStat.lastAnnounceTimedOut = b;
+            if( tr_bencDictFindStr( child, "lastScrapeResult", &str ) )
+                trackerStat.lastScrapeResult = QString::fromUtf8( str );
+            if( tr_bencDictFindInt( child, "lastScrapeStartTime", &i ) )
+                trackerStat.lastScrapeStartTime = i;
+            if( tr_bencDictFindBool( child, "lastScrapeSucceeded", &b ) )
+                trackerStat.lastScrapeSucceeded = b;
+            if( tr_bencDictFindInt( child, "lastScrapeTime", &i ) )
+                trackerStat.lastScrapeTime = i;
+            if( tr_bencDictFindBool( child, "lastScrapeTimedOut", &b ) )
+                trackerStat.lastScrapeTimedOut = b;
+            if( tr_bencDictFindInt( child, "leecherCount", &i ) )
+                trackerStat.leecherCount = i;
+            if( tr_bencDictFindInt( child, "nextAnnounceTime", &i ) )
+                trackerStat.nextAnnounceTime = i;
+            if( tr_bencDictFindInt( child, "nextScrapeTime", &i ) )
+                trackerStat.nextScrapeTime = i;
+            if( tr_bencDictFindInt( child, "scrapeState", &i ) )
+                trackerStat.scrapeState = i;
+            if( tr_bencDictFindInt( child, "seederCount", &i ) )
+                trackerStat.seederCount = i;
+            if( tr_bencDictFindInt( child, "tier", &i ) )
+                trackerStat.tier = i;
+            trackerStatsList << trackerStat;
+        }
+        myValues[TRACKERSTATS].setValue( trackerStatsList );
+        changed = true;
     }
 
     tr_benc * peers;
@@ -574,6 +644,8 @@ Torrent :: update( tr_benc * d )
                 peer.clientIsChoked = b;
             if( tr_bencDictFindBool( child, "clientIsInterested", &b ) )
                 peer.clientIsInterested = b;
+            if( tr_bencDictFindStr( child, "flagStr", &str ) )
+                peer.flagStr = QString::fromUtf8( str );
             if( tr_bencDictFindBool( child, "isDownloadingFrom", &b ) )
                 peer.isDownloadingFrom = b;
             if( tr_bencDictFindBool( child, "isEncrypted", &b ) )
@@ -615,7 +687,7 @@ Torrent :: activityString( ) const
         case TR_STATUS_CHECK:      str = tr( "Verifying local data" ); break;
         case TR_STATUS_DOWNLOAD:   str = tr( "Downloading" ); break;
         case TR_STATUS_SEED:       str = tr( "Seeding" ); break;
-        case TR_STATUS_STOPPED:    str = tr( "Paused" ); break;
+        case TR_STATUS_STOPPED:    str = isFinished() ? tr( "Finished" ): tr( "Paused" ); break;
     }
 
     return str;
@@ -636,3 +708,11 @@ Torrent :: getError( ) const
 
     return s;
 }
+
+QPixmap
+TrackerStat :: getFavicon( ) const
+{
+    MyApp * myApp = dynamic_cast<MyApp*>(QApplication::instance());
+    return myApp->favicons.find( QUrl( announce ) );
+}
+

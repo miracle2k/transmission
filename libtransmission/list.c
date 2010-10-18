@@ -144,6 +144,35 @@ tr_list_find( tr_list *         list,
     return NULL;
 }
 
+void
+tr_list_insert_sorted( tr_list            ** list,
+                       void                * data,
+                       TrListCompareFunc     compare )
+{
+    /* find l, the node that we'll insert this data before */
+    tr_list * l;
+
+    for( l = *list; l != NULL; l = l->next )
+    {
+        const int c = (compare)( data, l->data );
+        if( c <= 0 )
+            break;
+    }
+
+    if( l == NULL )
+        tr_list_append( list, data );
+    else if( l == *list )
+        tr_list_prepend( list, data );
+    else {
+        tr_list * node = node_alloc( );
+        node->data = data;
+        node->prev = l->prev;
+        node->next = l;
+        node->prev->next = node;
+        node->next->prev = node;
+    }
+}
+
 int
 tr_list_size( const tr_list * list )
 {
@@ -156,51 +185,4 @@ tr_list_size( const tr_list * list )
     }
 
     return size;
-}
-
-
-
-/*
- * Double-linked list with easy memory management and fast
- * insert/remove operations
- */
-
-
-void
-__tr_list_insert( struct __tr_list * list,
-		  struct __tr_list * prev,
-		  struct __tr_list * next)
-{
-    next->prev = list;
-    list->next = next;
-    list->prev = prev;
-    prev->next = list;
-}
-
-static void
-__tr_list_splice( struct __tr_list * prev,
-		  struct __tr_list * next)
-{
-    next->prev = prev;
-    prev->next = next;
-}
-
-void
-__tr_list_remove( struct __tr_list * head )
-{
-    __tr_list_splice( head->prev, head->next );
-    head->next = head->prev = NULL;
-}
-
-void
-__tr_list_destroy( struct __tr_list * head,
-                   __tr_list_free_t   func)
-{
-    while ( head->next != head )
-    {
-        struct __tr_list * list = head->next;
-        __tr_list_splice( list->prev, list->next );
-
-        func( list );
-    }
 }

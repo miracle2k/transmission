@@ -21,13 +21,14 @@ libtransmission_a_SOURCES = \
     bencode.c \
     bitfield.c \
     blocklist.c \
+    cache.c \
     clients.c \
     completion.c \
     ConvertUTF.c \
     crypto.c \
     fdlimit.c \
-    ggets.c \
     handshake.c \
+    history.c \
     inout.c \
     json.c \
     JSON_parser.c \
@@ -43,7 +44,6 @@ libtransmission_a_SOURCES = \
     platform.c \
     port-forwarding.c \
     ptrarray.c \
-    publish.c \
     ratecontrol.c \
     resume.c \
     rpcimpl.c \
@@ -54,6 +54,7 @@ libtransmission_a_SOURCES = \
     torrent-ctor.c \
     torrent-magnet.c \
     tr-dht.c \
+    tr-lpd.c \
     tr-getopt.c \
     trevent.c \
     upnp.c \
@@ -70,13 +71,14 @@ noinst_HEADERS = \
     bitfield.h \
     bitset.h \
     blocklist.h \
+    cache.h \
     clients.h \
     ConvertUTF.h \
     crypto.h \
     completion.h \
     fdlimit.h \
-    ggets.h \
     handshake.h \
+    history.h \
     inout.h \
     json.h \
     JSON_parser.h \
@@ -93,7 +95,6 @@ noinst_HEADERS = \
     platform.h \
     port-forwarding.h \
     ptrarray.h \
-    publish.h \
     ratecontrol.h \
     resume.h \
     rpcimpl.h \
@@ -105,6 +106,7 @@ noinst_HEADERS = \
     tr-getopt.h \
     transmission.h \
     tr-dht.h \
+    tr-lpd.h \
     trevent.h \
     upnp.h \
     utils.h \
@@ -117,6 +119,7 @@ TESTS = \
     blocklist-test \
     bencode-test \
     clients-test \
+    history-test \
     json-test \
     magnet-test \
     peer-msgs-test \
@@ -152,6 +155,10 @@ blocklist_test_LDFLAGS = ${apps_ldflags}
 clients_test_SOURCES = clients-test.c
 clients_test_LDADD = ${apps_ldadd}
 clients_test_LDFLAGS = ${apps_ldflags}
+
+history_test_SOURCES = history-test.c
+history_test_LDADD = ${apps_ldadd}
+history_test_LDFLAGS = ${apps_ldflags}
 
 json_test_SOURCES = json-test.c
 json_test_LDADD = ${apps_ldadd}

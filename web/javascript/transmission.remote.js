@@ -28,6 +28,7 @@ RPC._TurtleTimeEnabled      = 'alt-speed-time-enabled';
 RPC._TurtleTimeBegin        = 'alt-speed-time-begin';
 RPC._TurtleTimeEnd          = 'alt-speed-time-end';
 RPC._TurtleTimeDay          = 'alt-speed-time-day';
+RPC._StartAddedTorrent      = 'start-added-torrents';
 
 function TransmissionRemote( controller )
 {
@@ -66,7 +67,7 @@ TransmissionRemote.prototype =
 					: "";
 		if( !remote._error.length )
 			remote._error = 'Server not responding';
-		
+
 		dialog.confirm('Connection Failed',
 			'Could not connect to the server. You may need to reload the page to reconnect.',
 			'Details',
@@ -84,7 +85,7 @@ TransmissionRemote.prototype =
 	sendRequest: function( data, success, async ) {
 		remote = this;
 		if( typeof async != 'boolean' )
-		  async = true;
+			async = true;
 
 		var ajaxSettings = {
 			url: RPC._Root,
@@ -108,13 +109,19 @@ TransmissionRemote.prototype =
 		this.sendRequest( o, callback, async );
 	},
 
+	loadDaemonStats: function( callback, async ) {
+		var tr = this._controller;
+		var o = { method: 'session-stats' };
+		this.sendRequest( o, callback, async );
+	},
+
 	getInitialDataFor: function(torrent_ids, callback) {
 		var o = {
 			method: 'torrent-get',
 			arguments: {
 			fields: Torrent._StaticFields.concat( Torrent._MetaDataFields,
-                                                              Torrent._DynamicFields,
-                                                              [ 'files', 'fileStats' ] )
+			                                      Torrent._DynamicFields,
+			                                      [ 'files', 'fileStats' ] )
 			}
 		};
 
@@ -129,7 +136,7 @@ TransmissionRemote.prototype =
 			method: 'torrent-get',
 			arguments: {
 			fields: Torrent._StaticFields.concat( Torrent._MetaDataFields,
-                                                              [ 'files', 'fileStats' ] )
+			                                      [ 'files', 'fileStats' ] )
 			}
 		};
 
@@ -160,7 +167,7 @@ TransmissionRemote.prototype =
 			tr.updateTorrentsFileData( data.arguments.torrents );
 		} );
 	},
-	
+
 	changeFileCommand: function( command, torrent, file ) {
 		var remote = this;
 		var torrent_ids = [ torrent.id() ];
@@ -173,7 +180,7 @@ TransmissionRemote.prototype =
 			remote._controller.refreshTorrents( torrent_ids );
 		} );
 	},
-	
+
 	sendTorrentSetRequests: function( method, torrent_ids, args, callback ) {
 		if (!args) args = { };
 		args['ids'] = torrent_ids;
@@ -186,7 +193,7 @@ TransmissionRemote.prototype =
 			callback();
 		});
 	},
-	
+
 	sendTorrentActionRequests: function( method, torrent_ids, callback ) {
 		this.sendTorrentSetRequests( method, torrent_ids, null, callback );
 	},
@@ -229,7 +236,6 @@ TransmissionRemote.prototype =
 				filename: url
 			}
 		};
-		
 		this.sendRequest(o, function() {
 			remote._controller.refreshTorrents();
 		} );

@@ -1,11 +1,11 @@
 /*
- * This file Copyright (C) 2009-2010 Mnemosyne LLC
+ * This file Copyright (C) Mnemosyne LLC
  *
- * This file is licensed by the GPL version 2.  Works owned by the
- * Transmission project are granted a special exemption to clause 2(b)
- * so that the bulk of its code can remain under the MIT license.
- * This exemption does not extend to derived works not owned by
- * the Transmission project.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2
+ * as published by the Free Software Foundation.
+ *
+ * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
  *
  * $Id$
  */
@@ -15,6 +15,7 @@
 
 #include <QDateTime>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QVariant>
 
@@ -41,15 +42,15 @@ class Prefs: public QObject
             DIR_WATCH_ENABLED,
             SHOW_TRAY_ICON,
             SHOW_DESKTOP_NOTIFICATION,
-            START,
-            TRASH_ORIGINAL,
             ASKQUIT,
             SORT_MODE,
             SORT_REVERSED,
-            MINIMAL_VIEW,
+            COMPACT_VIEW,
             FILTERBAR,
             STATUSBAR,
             STATUSBAR_STATS,
+            SHOW_TRACKER_SCRAPES,
+            SHOW_BACKUP_TRACKERS,
             TOOLBAR,
             BLOCKLIST_DATE,
             BLOCKLIST_UPDATES_ENABLED,
@@ -59,6 +60,8 @@ class Prefs: public QObject
             MAIN_WINDOW_X,
             MAIN_WINDOW_Y,
             FILTER_MODE,
+            FILTER_TRACKERS,
+            FILTER_TEXT,
             SESSION_IS_REMOTE,
             SESSION_REMOTE_HOST,
             SESSION_REMOTE_PORT,
@@ -81,6 +84,8 @@ class Prefs: public QObject
             DSPEED_ENABLED,
             DOWNLOAD_DIR,
             ENCRYPTION,
+            IDLE_LIMIT,
+            IDLE_LIMIT_ENABLED,
             INCOMPLETE_DIR,
             INCOMPLETE_DIR_ENABLED,
             LAZY_BITFIELD,
@@ -92,9 +97,14 @@ class Prefs: public QObject
             PEER_PORT_RANDOM_ON_START,
             PEER_PORT_RANDOM_LOW,
             PEER_PORT_RANDOM_HIGH,
+            SCRIPT_TORRENT_DONE_ENABLED,
+            SCRIPT_TORRENT_DONE_FILENAME,
             SOCKET_TOS,
+            START,
+            TRASH_ORIGINAL,
             PEX_ENABLED,
             DHT_ENABLED,
+            LPD_ENABLED,
             PORT_FORWARDING,
             PROXY_AUTH_ENABLED,
             PREALLOCATION,
@@ -133,6 +143,7 @@ class Prefs: public QObject
         static PrefItem myItems[];
 
     private:
+        QSet<int> myTemporaryPrefs;
         QString myConfigDir;
         QVariant myValues[PREFS_COUNT];
         void initDefaults( struct tr_benc* );

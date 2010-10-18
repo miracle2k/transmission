@@ -1,11 +1,11 @@
 /*
- * This file Copyright (C) 2009-2010 Mnemosyne LLC
+ * This file Copyright (C) Mnemosyne LLC
  *
- * This file is licensed by the GPL version 2.  Works owned by the
- * Transmission project are granted a special exemption to clause 2(b)
- * so that the bulk of its code can remain under the MIT license.
- * This exemption does not extend to derived works not owned by
- * the Transmission project.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2
+ * as published by the Free Software Foundation.
+ *
+ * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
  *
  * $Id$
  */
@@ -26,16 +26,23 @@ class Utils: public QObject
     public:
         Utils( ) { }
         virtual ~Utils( ) { }
-    public:
 
-        static QString sizeToString( double size );
-        static QString speedToString( const Speed& speed );
-        static QString ratioToString( double ratio );
-        static QString timeToString( int seconds );
+    public:
+        static QString remoteFileChooser( QWidget * parent, const QString& title, const QString& myPath, bool dir, bool local );
         static const QIcon& guessMimeIcon( const QString& filename );
 
         // meh
         static void toStderr( const QString& qstr );
+
+        /// 
+        /// URLs
+        ///
+
+        static bool isMagnetLink( const QString& s ) { return s.startsWith( "magnet:?" ); }
+
+        static bool isURL( const QString& s ) { return s.startsWith( "http://" )
+                                                    || s.startsWith( "https://" )
+                                                    || s.startsWith( "ftp://" ); }
 
 };
 

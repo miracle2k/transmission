@@ -11,19 +11,25 @@
  */
 
 #include <assert.h>
-#include <ctype.h> /* isdigit */
+#include <ctype.h> /* isdigit() */
 #include <errno.h>
-#include <math.h> /* fabs */
+#include <math.h> /* fabs() */
 #include <stdio.h>
-#include <stdlib.h>
+#include <stdlib.h> /* realpath() */
 #include <string.h>
+
+#ifdef WIN32 /* tr_mkstemp() */
+ #include <fcntl.h>
+ #define _S_IREAD 256
+ #define _S_IWRITE 128
+#endif
 
 #include <sys/types.h> /* stat() */
 #include <sys/stat.h> /* stat() */
 #include <locale.h>
 #include <unistd.h> /* stat(), close() */
 
-#include <event.h> /* evbuffer */
+#include <event.h> /* struct evbuffer */
 
 #include "ConvertUTF.h"
 
@@ -31,6 +37,7 @@
 #include "bencode.h"
 #include "json.h"
 #include "list.h"
+#include "platform.h" /* TR_PATH_MAX */
 #include "ptrarray.h"
 #include "utils.h" /* tr_new(), tr_free() */
 
@@ -58,8 +65,7 @@ isSomething( const tr_benc * val )
 }
 
 static void
-tr_bencInit( tr_benc * val,
-             int       type )
+tr_bencInit( tr_benc * val, char type )
 {
     memset( val, 0, sizeof( *val ) );
     val->type = type;
@@ -422,6 +428,19 @@ tr_bencListChild( tr_benc * val,
     return ret;
 }
 
+int
+tr_bencListRemove( tr_benc * list, size_t i )
+{
+    if( tr_bencIsList( list ) && ( i < list->val.l.count ) )
+    {
+        tr_bencFree( &list->val.l.vals[i] );
+        tr_removeElementFromArray( list->val.l.vals, i, sizeof( tr_benc ), list->val.l.count-- );
+        return 1;
+    }
+
+    return 0;
+}
+
 static void
 tr_benc_warning( const char * err )
 {
@@ -448,10 +467,9 @@ tr_bencGetInt( const tr_benc * val,
 }
 
 tr_bool
-tr_bencGetStr( const tr_benc * val,
-               const char **   setme )
+tr_bencGetStr( const tr_benc * val, const char ** setme )
 {
-    const int success = tr_bencIsString( val );
+    const tr_bool success = tr_bencIsString( val );
 
     if( success )
         *setme = getStr( val );
@@ -1331,8 +1349,8 @@ jsonRealFunc( const tr_benc * val, void * vdata )
     struct jsonWalk * data = vdata;
     char locale[128];
 
-    if( fabs( val->val.d ) < 0.00001 )
-        evbuffer_add( data->out, "0", 1 );
+    if( fabs( val->val.d - (int)val->val.d ) < 0.00001 )
+        evbuffer_add_printf( data->out, "%d", (int)val->val.d );
     else {
         /* json requires a '.' decimal point regardless of locale */
         tr_strlcpy( locale, setlocale( LC_NUMERIC, NULL ), sizeof( locale ) );
@@ -1358,7 +1376,6 @@ jsonStringFunc( const tr_benc * val, void * vdata )
     {
         switch( *it )
         {
-            case '/': evbuffer_add( data->out, "\\/", 2 ); break;
             case '\b': evbuffer_add( data->out, "\\b", 2 ); break;
             case '\f': evbuffer_add( data->out, "\\f", 2 ); break;
             case '\n': evbuffer_add( data->out, "\\n", 2 ); break;
@@ -1615,16 +1632,47 @@ tr_bencToStr( const tr_benc * top, tr_fmt_mode mode, int * len )
     return ret;
 }
 
+/* portability wrapper for mkstemp(). */
+static int
+tr_mkstemp( char * template )
+{
+#ifdef WIN32
+    const int flags = O_RDWR | O_BINARY | O_CREAT | O_EXCL | _O_SHORT_LIVED;
+    const mode_t mode = _S_IREAD | _S_IWRITE;
+    mktemp( template );
+    return open( template, flags, mode );
+#else
+    return mkstemp( template );
+#endif
+}
+
+/* portability wrapper for fsync(). */
+static void
+tr_fsync( int fd )
+{
+#ifdef WIN32
+    _commit( fd );
+#else
+    fsync( fd );
+#endif
+}
+
 int
 tr_bencToFile( const tr_benc * top, tr_fmt_mode mode, const char * filename )
 {
     char * tmp;
     int fd;
     int err = 0;
+    char buf[TR_PATH_MAX];
+
+    /* follow symlinks to find the "real" file, to make sure the temporary
+     * we build with tr_mkstemp() is created on the right partition */
+    if( tr_realpath( filename, buf ) != NULL )
+        filename = buf;
 
     /* if the file already exists, try to move it out of the way & keep it as a backup */
     tmp = tr_strdup_printf( "%s.tmp.XXXXXX", filename );
-    fd = mkstemp( tmp );
+    fd = tr_mkstemp( tmp );
     if( fd >= 0 )
     {
         int len;
@@ -1633,6 +1681,7 @@ tr_bencToFile( const tr_benc * top, tr_fmt_mode mode, const char * filename )
 
         if( write( fd, str, len ) == (ssize_t)len )
         {
+            tr_fsync( fd );
             close( fd );
 
             if( !unlink( filename ) || ( errno == ENOENT ) )
@@ -1703,3 +1752,4 @@ tr_bencLoadFile( tr_benc * setme, tr_fmt_mode mode, const char * filename )
     tr_free( content );
     return err;
 }
+

@@ -27,11 +27,21 @@
 #import "NSStringAdditions.h"
 #import "Torrent.h"
 
+@interface InfoGeneralViewController (Private)
+
+- (void) setupInfo;
+
+@end
+
 @implementation InfoGeneralViewController
 
 - (id) init
 {
-    self = [super initWithNibName: @"InfoGeneralView" bundle: nil];
+    if ((self = [super initWithNibName: @"InfoGeneralView" bundle: nil]))
+    {
+        [self setTitle: NSLocalizedString(@"General Info", "Inspector view -> title")];
+    }
+    
     return self;
 }
 
@@ -62,54 +72,18 @@
 
 - (void) setInfoForTorrents: (NSArray *) torrents
 {
-    if (fTorrents && [fTorrents isEqualToArray: torrents])
-        return;
-    
+    //don't check if it's the same in case the metadata changed
     [fTorrents release];
     fTorrents = [torrents retain];
     
-    if ([fTorrents count] == 1)
-    {
-        Torrent * torrent = [fTorrents objectAtIndex: 0];
-        
-        NSString * piecesString = ![torrent isMagnet] ? [NSString stringWithFormat: @"%d, %@", [torrent pieceCount],
-                                        [NSString stringForFileSize: [torrent pieceSize]]] : @"";
-        [fPiecesField setStringValue: piecesString];
-                                        
-        NSString * hashString = [torrent hashString];
-        [fHashField setStringValue: hashString];
-        [fHashField setToolTip: hashString];
-        [fSecureField setStringValue: [torrent privateTorrent]
-                        ? NSLocalizedString(@"Private Torrent, PEX and DHT automatically disabled", "Inspector -> private torrent")
-                        : NSLocalizedString(@"Public Torrent", "Inspector -> private torrent")];
-        
-        NSString * commentString = [torrent comment];
-        [fCommentView setString: commentString];
-        
-        NSString * creatorString = [torrent creator];
-        [fCreatorField setStringValue: creatorString];
-        [fDateCreatedField setObjectValue: [torrent dateCreated]];
-    }
-    else
-    {
-        [fPiecesField setStringValue: @""];
-        [fHashField setStringValue: @""];
-        [fHashField setToolTip: nil];
-        [fSecureField setStringValue: @""];
-        [fCommentView setString: @""];
-        
-        [fCreatorField setStringValue: @""];
-        [fDateCreatedField setStringValue: @""];
-        
-        [fDataLocationField setStringValue: @""];
-        [fDataLocationField setToolTip: nil];
-        
-        [fRevealDataButton setHidden: YES];
-    }
+    fSet = NO;
 }
 
 - (void) updateInfo
-{   
+{
+    if (!fSet)
+        [self setupInfo];
+    
     if ([fTorrents count] != 1)
         return;
     
@@ -139,3 +113,52 @@
 }
 
 @end
+
+@implementation InfoGeneralViewController (Private)
+
+- (void) setupInfo
+{
+    if ([fTorrents count] == 1)
+    {
+        Torrent * torrent = [fTorrents objectAtIndex: 0];
+        
+        NSString * piecesString = ![torrent isMagnet] ? [NSString stringWithFormat: @"%d, %@", [torrent pieceCount],
+                                        [NSString stringForFileSize: [torrent pieceSize]]] : @"";
+        [fPiecesField setStringValue: piecesString];
+                                        
+        NSString * hashString = [torrent hashString];
+        [fHashField setStringValue: hashString];
+        [fHashField setToolTip: hashString];
+        [fSecureField setStringValue: [torrent privateTorrent]
+                        ? NSLocalizedString(@"Private Torrent, non-tracker peer discovery disabled", "Inspector -> private torrent")
+                        : NSLocalizedString(@"Public Torrent", "Inspector -> private torrent")];
+        
+        NSString * commentString = [torrent comment];
+        [fCommentView setString: commentString];
+        
+        NSString * creatorString = [torrent creator];
+        [fCreatorField setStringValue: creatorString];
+        [fDateCreatedField setObjectValue: [torrent dateCreated]];
+    }
+    else
+    {
+        [fPiecesField setStringValue: @""];
+        [fHashField setStringValue: @""];
+        [fHashField setToolTip: nil];
+        [fSecureField setStringValue: @""];
+        [fCommentView setString: @""];
+        
+        [fCreatorField setStringValue: @""];
+        [fDateCreatedField setStringValue: @""];
+        
+        [fDataLocationField setStringValue: @""];
+        [fDataLocationField setToolTip: nil];
+        
+        [fRevealDataButton setHidden: YES];
+    }
+    
+    fSet = YES;
+}
+
+@end
+

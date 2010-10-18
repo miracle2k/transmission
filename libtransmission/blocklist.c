@@ -11,11 +11,15 @@
  */
 
 #include <stdio.h>
-#include <stdlib.h> /* free */
+#include <stdlib.h> /* free() */
 #include <string.h>
 
 #ifdef WIN32
+ #include <w32api.h>
+ #define WINVER  WindowsXP
  #include <windows.h>
+ #define PROT_READ      PAGE_READONLY
+ #define MAP_PRIVATE    FILE_MAP_COPY
 #endif
 
 #ifndef WIN32
@@ -27,13 +31,15 @@
 #include <unistd.h>
 #include <assert.h>
 
-#include "ggets.h"
-
 #include "transmission.h"
 #include "platform.h"
 #include "blocklist.h"
 #include "net.h"
 #include "utils.h"
+
+#ifndef O_BINARY
+ #define O_BINARY 0
+#endif
 
 
 /***
@@ -73,8 +79,9 @@ blocklistClose( tr_blocklist * b )
 static void
 blocklistLoad( tr_blocklist * b )
 {
-    int          fd;
-    struct stat  st;
+    int fd;
+    size_t byteCount;
+    struct stat st;
     const char * err_fmt = _( "Couldn't read \"%1$s\": %2$s" );
 
     blocklistClose( b );
@@ -82,18 +89,15 @@ blocklistLoad( tr_blocklist * b )
     if( stat( b->filename, &st ) == -1 )
         return;
 
-    fd = open( b->filename, O_RDONLY );
+    fd = open( b->filename, O_RDONLY | O_BINARY );
     if( fd == -1 )
     {
         tr_err( err_fmt, b->filename, tr_strerror( errno ) );
         return;
     }
 
-#ifndef WIN32
-    b->rules = mmap( NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0 );
-#else
-    b->rules = mmap( NULL, st.st_size, 0, 0, fd, 0 );
-#endif
+    byteCount = (size_t) st.st_size;
+    b->rules = mmap( NULL, byteCount, PROT_READ, MAP_PRIVATE, fd, 0 );
     if( !b->rules )
     {
         tr_err( err_fmt, b->filename, tr_strerror( errno ) );
@@ -101,13 +105,13 @@ blocklistLoad( tr_blocklist * b )
         return;
     }
 
-    b->byteCount = st.st_size;
-    b->ruleCount = st.st_size / sizeof( struct tr_ip_range );
     b->fd = fd;
+    b->byteCount = byteCount;
+    b->ruleCount = byteCount / sizeof( struct tr_ip_range );
 
     {
         char * base = tr_basename( b->filename );
-        tr_inf( _( "Blocklist \"%s\" contains %'zu entries" ), base, b->ruleCount );
+        tr_inf( _( "Blocklist \"%s\" contains %zu entries" ), base, b->ruleCount );
         tr_free( base );
     }
 }
@@ -143,8 +147,7 @@ blocklistDelete( tr_blocklist * b )
 ***/
 
 tr_blocklist *
-_tr_blocklistNew( const char * filename,
-                  int          isEnabled )
+_tr_blocklistNew( const char * filename, tr_bool isEnabled )
 {
     tr_blocklist * b;
 
@@ -227,14 +230,88 @@ _tr_blocklistHasAddress( tr_blocklist     * b,
     return range != NULL;
 }
 
+/*
+ * level1 format: "comment:x.x.x.x-y.y.y.y"
+ */
+static tr_bool
+parseLine1( const char * line, struct tr_ip_range * range )
+{
+    char * walk;
+    int b[4];
+    int e[4];
+    char str[64];
+    tr_address addr;
+
+    walk = strrchr( line, ':' );
+    if( !walk )
+        return FALSE;
+    ++walk; /* walk past the colon */
+
+    if( sscanf( walk, "%d.%d.%d.%d-%d.%d.%d.%d",
+                &b[0], &b[1], &b[2], &b[3],
+                &e[0], &e[1], &e[2], &e[3] ) != 8 )
+        return FALSE;
+
+    tr_snprintf( str, sizeof( str ), "%d.%d.%d.%d", b[0], b[1], b[2], b[3] );
+    if( tr_pton( str, &addr ) == NULL )
+        return FALSE;
+    range->begin = ntohl( addr.addr.addr4.s_addr );
+
+    tr_snprintf( str, sizeof( str ), "%d.%d.%d.%d", e[0], e[1], e[2], e[3] );
+    if( tr_pton( str, &addr ) == NULL )
+        return FALSE;
+    range->end = ntohl( addr.addr.addr4.s_addr );
+
+    return TRUE;
+}
+
+/*
+ * "000.000.000.000 - 000.255.255.255 , 000 , invalid ip"
+ */
+static tr_bool
+parseLine2( const char * line, struct tr_ip_range * range )
+{
+    int unk;
+    int a[4];
+    int b[4];
+    char str[32];
+    tr_address addr;
+
+    if( sscanf( line, "%3d.%3d.%3d.%3d - %3d.%3d.%3d.%3d , %3d , ",
+                &a[0], &a[1], &a[2], &a[3],
+                &b[0], &b[1], &b[2], &b[3],
+                &unk ) != 9 )
+        return FALSE;
+
+    tr_snprintf( str, sizeof(str), "%d.%d.%d.%d", a[0], a[1], a[2], a[3] );
+    if( tr_pton( str, &addr ) == NULL )
+        return FALSE;
+    range->begin = ntohl( addr.addr.addr4.s_addr );
+
+    tr_snprintf( str, sizeof(str), "%d.%d.%d.%d", b[0], b[1], b[2], b[3] );
+    if( tr_pton( str, &addr ) == NULL )
+        return FALSE;
+    range->end = ntohl( addr.addr.addr4.s_addr );
+
+    return TRUE;
+}
+
+static int
+parseLine( const char * line, struct tr_ip_range * range )
+{
+    return parseLine1( line, range )
+        || parseLine2( line, range );
+}
+
 int
 _tr_blocklistSetContent( tr_blocklist * b,
                          const char *   filename )
 {
-    FILE *       in;
-    FILE *       out;
-    char *       line;
-    int          lineCount = 0;
+    FILE * in;
+    FILE * out;
+    int inCount = 0;
+    int outCount = 0;
+    char line[2048];
     const char * err_fmt = _( "Couldn't read \"%1$s\": %2$s" );
 
     if( !filename )
@@ -243,7 +320,7 @@ _tr_blocklistSetContent( tr_blocklist * b,
         return 0;
     }
 
-    in = fopen( filename, "r" );
+    in = fopen( filename, "rb" );
     if( !in )
     {
         tr_err( err_fmt, filename, tr_strerror( errno ) );
@@ -260,57 +337,45 @@ _tr_blocklistSetContent( tr_blocklist * b,
         return 0;
     }
 
-    while( !fggets( &line, in ) )
+    while( fgets( line, sizeof( line ), in ) != NULL )
     {
-        char * rangeBegin;
-        char * rangeEnd;
-        char * crpos;
-        tr_address  addr;
+        char * walk;
         struct tr_ip_range range;
 
-        rangeBegin = strrchr( line, ':' );
-        if( !rangeBegin ){ free( line ); continue; }
-        ++rangeBegin;
+        ++inCount;
 
-        rangeEnd = strchr( rangeBegin, '-' );
-        if( !rangeEnd ){ free( line ); continue; }
-        *rangeEnd++ = '\0';
-        if(( crpos = strchr( rangeEnd, '\r' )))
-            *crpos = '\0';
+        /* zap the linefeed */
+        if(( walk = strchr( line, '\r' ))) *walk = '\0'; 
+        if(( walk = strchr( line, '\n' ))) *walk = '\0'; 
 
-        if( !tr_pton( rangeBegin, &addr ) )
-            tr_err( "blocklist skipped invalid address [%s]\n", rangeBegin );
-        range.begin = ntohl( addr.addr.addr4.s_addr );
-
-        if( !tr_pton( rangeEnd, &addr ) )
-            tr_err( "blocklist skipped invalid address [%s]\n", rangeEnd );
-        range.end = ntohl( addr.addr.addr4.s_addr );
-
-        free( line );
+        if( !parseLine( line, &range ) )
+        {
+            /* don't try to display the actual lines - it causes issues */
+            tr_err( _( "blocklist skipped invalid address at line %d" ), inCount );
+            continue;
+        }
 
         if( fwrite( &range, sizeof( struct tr_ip_range ), 1, out ) != 1 )
         {
-            tr_err( _(
-                       "Couldn't save file \"%1$s\": %2$s" ), b->filename,
+            tr_err( _( "Couldn't save file \"%1$s\": %2$s" ), b->filename,
                    tr_strerror( errno ) );
             break;
         }
 
-        ++lineCount;
+        ++outCount;
     }
 
     {
         char * base = tr_basename( b->filename );
-        tr_inf( _( "Blocklist \"%1$s\" updated with %2$'d entries" ), base, lineCount );
+        tr_inf( _( "Blocklist \"%s\" updated with %d entries" ), base, outCount );
         tr_free( base );
     }
-
 
     fclose( out );
     fclose( in );
 
     blocklistLoad( b );
 
-    return lineCount;
+    return outCount;
 }
 

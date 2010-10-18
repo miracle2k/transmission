@@ -37,7 +37,7 @@
     NSString * fInitialString;
     
     IBOutlet NSPopUpButton * fFolderPopUp, * fIncompleteFolderPopUp, * fImportFolderPopUp;
-    IBOutlet NSTextField * fRatioStopField, * fQueueDownloadField, * fQueueSeedField, * fStalledField;
+    IBOutlet NSTextField * fRatioStopField, * fIdleStopField, * fQueueDownloadField, * fQueueSeedField, * fStalledField;
 
     IBOutlet NSTextField * fUploadField, * fDownloadField,
                         * fSpeedLimitUploadField, * fSpeedLimitDownloadField;
@@ -84,6 +84,7 @@
 
 - (void) setPEX: (id) sender;
 - (void) setDHT: (id) sender;
+- (void) setLPD: (id) sender;
 
 - (void) setEncryptionMode: (id) sender;
 
@@ -91,6 +92,8 @@
 - (void) updateBlocklist: (id) sender;
 - (void) setBlocklistAutoUpdate: (id) sender;
 - (void) updateBlocklistFields;
+
+- (void) setAutoStartDownloads: (id) sender;
 
 - (void) setBadge: (id) sender;
 
@@ -112,8 +115,11 @@
 - (void) setRenamePartialFiles: (id) sender;
 
 - (void) applyRatioSetting: (id) sender;
-- (void) updateRatioStopField;
 - (void) setRatioStop: (id) sender;
+- (void) updateRatioStopField;
+
+- (void) applyIdleStopSetting: (id) sender;
+- (void) setIdleStop: (id) sender;
 
 - (void) applySpeedSettings: (id) sender;
 - (void) applyAltSpeedSettings;

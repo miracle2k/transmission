@@ -115,8 +115,7 @@
     [alert setMessageText: NSLocalizedString(@"Download of the blocklist failed.", "Blocklist -> message")];
     [alert setAlertStyle: NSWarningAlertStyle];
     
-    [alert setInformativeText: [NSString stringWithFormat: @"%@ - %@", NSLocalizedString(@"Error", "Blocklist -> message"),
-        error]];
+    [alert setInformativeText: error];
     
     [alert beginSheetModalForWindow: [fPrefsController window] modalDelegate: self
         didEndSelector: @selector(failureSheetClosed:returnCode:contextInfo:) contextInfo: nil];
@@ -140,10 +139,11 @@
 {
     //load window and show as sheet
     [NSBundle loadNibNamed: @"BlocklistStatusWindow" owner: self];
-    [NSApp beginSheet: fStatusWindow modalForWindow: [fPrefsController window] modalDelegate: nil didEndSelector: nil contextInfo: nil];
     
     BlocklistDownloader * downloader = [BlocklistDownloader downloader];
-    [downloader setViewController: self];
+    [downloader setViewController: self]; //do before showing the sheet to ensure it doesn't slide out with placeholder text
+    
+    [NSApp beginSheet: fStatusWindow modalForWindow: [fPrefsController window] modalDelegate: nil didEndSelector: nil contextInfo: nil];
 }
 
 - (void) failureSheetClosed: (NSAlert *) alert returnCode: (NSInteger) code contextInfo: (void *) info

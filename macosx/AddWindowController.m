@@ -69,10 +69,12 @@
         
         fTorrentFile = [[torrentFile stringByExpandingTildeInPath] retain];
         
-        fDeleteTorrent = deleteTorrent;
-        fDeleteEnable = canToggleDelete;
+        fDeleteTorrentInitial = deleteTorrent;
+        fDeleteEnableInitial = canToggleDelete;
         
         fGroupValue = [torrent groupValue];
+        
+        [fVerifyIndicator setUsesThreadedAnimation: YES];
     }
     return self;
 }
@@ -90,6 +92,7 @@
     NSString * name = [fTorrent name];
     [[self window] setTitle: name];
     [fNameField setStringValue: name];
+    [fNameField setToolTip: name];
     
     [fIconView setImage: [fTorrent icon]];
     
@@ -110,8 +113,8 @@
     
     [fStartCheck setState: [[NSUserDefaults standardUserDefaults] boolForKey: @"AutoStartDownload"] ? NSOnState : NSOffState];
     
-    [fDeleteCheck setState: fDeleteTorrent ? NSOnState : NSOffState];
-    [fDeleteCheck setEnabled: fDeleteEnable];
+    [fDeleteCheck setState: fDeleteTorrentInitial ? NSOnState : NSOffState];
+    [fDeleteCheck setEnabled: fDeleteEnableInitial];
     
     if (fDestination)
         [self setDestinationPath: fDestination];
@@ -268,11 +271,15 @@
     
     if ([fTorrent isChecking])
     {
-        [fVerifyIndicator setHidden: NO];
-        [fVerifyIndicator setDoubleValue: [fTorrent checkingProgress]];
+        const BOOL waiting = [fTorrent isCheckingWaiting];
+        [fVerifyIndicator setIndeterminate: waiting];
+        if (!waiting)
+            [fVerifyIndicator setDoubleValue: [fTorrent checkingProgress]];
+        
+        [fVerifyIndicator startAnimation: self];
     }
     else
-        [fVerifyIndicator setHidden: YES];
+        [fVerifyIndicator stopAnimation: self];
 }
 
 - (void) confirmAdd

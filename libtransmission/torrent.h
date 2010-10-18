@@ -43,10 +43,10 @@ void        tr_ctorInitTorrentWanted( const tr_ctor * ctor, tr_torrent * tor );
 **/
 
 /* just like tr_torrentSetFileDLs but doesn't trigger a fastresume save */
-void        tr_torrentInitFileDLs( tr_torrent *      tor,
-                                   tr_file_index_t * files,
-                                   tr_file_index_t   fileCount,
-                                   tr_bool           do_download );
+void        tr_torrentInitFileDLs( tr_torrent              * tor,
+                                   const tr_file_index_t   * files,
+                                   tr_file_index_t          fileCount,
+                                   tr_bool                  do_download );
 
 void        tr_torrentRecheckCompleteness( tr_torrent * );
 
@@ -101,16 +101,13 @@ void             tr_torrentSetFileChecked( tr_torrent       * tor,
 
 void             tr_torrentUncheck( tr_torrent * tor );
 
-int              tr_torrentPromoteTracker( tr_torrent   * tor,
-                                           int            trackerIndex );
-
 time_t*          tr_torrentGetMTimes( const tr_torrent  * tor,
                                       size_t            * setmeCount );
 
 tr_torrent*      tr_torrentNext( tr_session  * session,
                                  tr_torrent  * current );
 
-void             tr_torrentCheckSeedRatio( tr_torrent * tor );
+void             tr_torrentCheckSeedLimit( tr_torrent * tor );
 
 /** save a torrent's .resume file if it's changed since the last time it was saved */
 void             tr_torrentSave( tr_torrent * tor );
@@ -130,6 +127,8 @@ tr_verify_state;
 void             tr_torrentSetVerifyState( tr_torrent      * tor,
                                            tr_verify_state   state );
 
+tr_torrent_activity tr_torrentGetActivity( tr_torrent * tor );
+
 struct tr_incomplete_metadata;
 
 /** @brief Torrent object */
@@ -142,6 +141,7 @@ struct tr_torrent
 
     tr_stat_errtype          error;
     char                     errorString[128];
+    char                     errorTracker[128];
 
     uint8_t                  obfuscatedHash[SHA_DIGEST_LENGTH];
 
@@ -165,10 +165,13 @@ struct tr_torrent
     /* Where the files are when the torrent is incomplete */
     char * incompleteDir;
 
-    /* Length, in bytes, of the "info" dict in the .torrent file */
+    /* Length, in bytes, of the "info" dict in the .torrent file. */
     int infoDictLength;
 
-    /* Offset, in bytes, of the beginning of the "info" dict in the .torrent file */
+    /* Offset, in bytes, of the beginning of the "info" dict in the .torrent file.
+     *
+     * Used by the torrent-magnet code for serving metainfo to peers.
+     * This field is lazy-generated and might not be initialized yet. */
     int infoDictOffset;
 
     /* Where the files are now.
@@ -182,8 +185,8 @@ struct tr_torrent
     uint32_t                   lastBlockSize;
     uint32_t                   lastPieceSize;
 
-    uint32_t                   blockCountInPiece;
-    uint32_t                   blockCountInLastPiece;
+    uint16_t                   blockCountInPiece;
+    uint16_t                   blockCountInLastPiece;
 
     struct tr_completion       completion;
 
@@ -191,12 +194,13 @@ struct tr_torrent
     tr_completeness            completeness;
 
     struct tr_torrent_tiers  * tiers;
-    struct tr_publisher_tag  * tiersSubscription;
 
     time_t                     dhtAnnounceAt;
     time_t                     dhtAnnounce6At;
     tr_bool                    dhtAnnounceInProgress;
     tr_bool                    dhtAnnounce6InProgress;
+    
+    time_t                     lpdAnnounceAt;
 
     uint64_t                   downloadedCur;
     uint64_t                   downloadedPrev;
@@ -206,9 +210,9 @@ struct tr_torrent
     uint64_t                   corruptPrev;
 
     uint64_t                   etaDLSpeedCalculatedAt;
-    double                     etaDLSpeed;
+    double                     etaDLSpeed_KBps;
     uint64_t                   etaULSpeedCalculatedAt;
-    double                     etaULSpeed;
+    double                     etaULSpeed_KBps;
 
     time_t                     addedDate;
     time_t                     activityDate;
@@ -225,11 +229,16 @@ struct tr_torrent
     tr_torrent_ratio_limit_hit_func  * ratio_limit_hit_func;
     void                             * ratio_limit_hit_func_user_data;
 
+    tr_torrent_idle_limit_hit_func  * idle_limit_hit_func;
+    void                            * idle_limit_hit_func_user_data;
+
     tr_bool                    isRunning;
+    tr_bool                    isStopping;
     tr_bool                    isDeleting;
-    tr_bool                    needsSeedRatioCheck;
     tr_bool                    startAfterVerify;
     tr_bool                    isDirty;
+
+    tr_bool                    infoDictOffsetIsCached;
 
     uint16_t                   maxConnectedPeers;
 
@@ -249,6 +258,10 @@ struct tr_torrent
     double                     desiredRatio;
     tr_ratiolimit              ratioLimitMode;
 
+    uint16_t                   idleLimitMinutes;
+    tr_idlelimit               idleLimitMode;
+    tr_bool                    finishedSeedingByIdle;
+
     uint64_t                   preVerifyTotal;
 };
 
@@ -267,11 +280,13 @@ tr_torBlockPiece( const tr_torrent * tor, const tr_block_index_t block )
 }
 
 /* how many blocks are in this piece? */
-static inline uint32_t
+static inline uint16_t
 tr_torPieceCountBlocks( const tr_torrent * tor, const tr_piece_index_t piece )
 {
-    return piece == tor->info.pieceCount - 1 ? tor->blockCountInLastPiece
-                                             : tor->blockCountInPiece;
+    if( piece + 1 == tor->info.pieceCount )
+        return tor->blockCountInLastPiece;
+    else
+        return tor->blockCountInPiece;
 }
 
 /* how many bytes are in this piece? */
@@ -331,6 +346,13 @@ static inline tr_bool tr_torrentAllowsDHT( const tr_torrent * tor )
         && ( !tr_torrentIsPrivate( tor ) );
 }
 
+static inline tr_bool tr_torrentAllowsLPD( const tr_torrent * tor )
+{
+    return ( tor != NULL )
+        && ( tr_sessionAllowsLPD( tor->session ) )
+        && ( !tr_torrentIsPrivate( tor ) );
+}
+
 static inline tr_bool tr_torrentIsPieceChecked( const tr_torrent  * tor,
                                                    tr_piece_index_t    i )
 {
@@ -371,6 +393,8 @@ const char * tr_torrentName( const tr_torrent * tor )
     return tor->info.name;
 }
 
+uint32_t tr_getBlockSize( uint32_t pieceSize );
+
 /**
  * Tell the tr_torrent that one of its files has become complete
  */
@@ -403,5 +427,9 @@ char* tr_torrentBuildPartial( const tr_torrent *, tr_file_index_t fileNo );
 /* for when the info dict has been fundamentally changed wrt files,
  * piece size, etc. such as in BEP 9 where peers exchange metadata */
 void tr_torrentGotNewInfoDict( tr_torrent * tor );
+
+void tr_torrentSetSpeedLimit_Bps  ( tr_torrent *, tr_direction, int Bps );
+int tr_torrentGetSpeedLimit_Bps  ( const tr_torrent *, tr_direction );
+
 
 #endif

@@ -25,9 +25,9 @@
 
 #include "bitfield.h"
 #include "bitset.h"
+#include "history.h"
 #include "net.h"
 #include "peer-common.h" /* struct peer_request */
-#include "publish.h" /* tr_publisher_tag */
 
 /**
  * @addtogroup peers Peers
@@ -110,8 +110,19 @@ typedef struct tr_peer
 
     time_t                   chokeChangedAt;
 
+    time_t                   lastBlocksAtTime;
+    int                      blocksAt[60];
+
+    time_t                   lastCancelTime;
+    int                      cancelAt[60];
+
+    tr_recentHistory       * blocksSentToClient;
+    tr_recentHistory       * blocksSentToPeer;
+
+    tr_recentHistory       * cancelsSentToClient;
+    tr_recentHistory       * cancelsSentToPeer;
+
     struct tr_peermsgs     * msgs;
-    tr_publisher_tag         msgsTag;
 }
 tr_peer;
 
@@ -159,9 +170,15 @@ tr_pex * tr_peerMgrArrayToPex( const void * array,
                                size_t       arrayLen,
                                size_t      * setme_pex_count );
 
+/**
+ * @param seedProbability [0..100] for likelihood that the peer is a seed; -1 for unknown
+ */
 void tr_peerMgrAddPex( tr_torrent     * tor,
                        uint8_t          from,
-                       const tr_pex   * pex );
+                       const tr_pex   * pex,
+                       int8_t           seedProbability );
+
+void tr_peerMgrMarkAllAsSeeds( tr_torrent * tor );
 
 void tr_peerMgrSetBlame( tr_torrent        * tor,
                          tr_piece_index_t    pieceIndex,
@@ -194,6 +211,8 @@ void tr_peerMgrTorrentAvailability( const tr_torrent * tor,
 
 struct tr_bitfield* tr_peerMgrGetAvailable( const tr_torrent * tor );
 
+void tr_peerMgrOnBlocklistChanged( tr_peerMgr * manager );
+
 void tr_peerMgrTorrentStats( tr_torrent * tor,
                              int * setmePeersKnown,
                              int * setmePeersConnected,
@@ -206,14 +225,16 @@ void tr_peerMgrTorrentStats( tr_torrent * tor,
 struct tr_peer_stat* tr_peerMgrPeerStats( const tr_torrent * tor,
                                           int              * setmeCount );
 
-float tr_peerMgrGetWebseedSpeed( const tr_torrent * tor, uint64_t now );
+int tr_peerMgrGetWebseedSpeed_Bps( const tr_torrent * tor, uint64_t now );
 
-float* tr_peerMgrWebSpeeds( const tr_torrent * tor );
+double* tr_peerMgrWebSpeeds_KBps( const tr_torrent * tor );
 
 
-double tr_peerGetPieceSpeed( const tr_peer    * peer,
-                             uint64_t           now,
-                             tr_direction       direction );
+int tr_peerGetPieceSpeed_Bps( const tr_peer    * peer,
+                              uint64_t           now,
+                              tr_direction       direction );
+
+void tr_peerMgrClearInterest( tr_torrent * tor );
 
 /* @} */
 

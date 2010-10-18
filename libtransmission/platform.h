@@ -17,19 +17,19 @@
 #ifndef TR_PLATFORM_H
 #define TR_PLATFORM_H
 
-#if defined( WIN32 )
- #define TR_PATH_DELIMITER '\\'
- #define TR_PATH_DELIMITER_STR "\\"
-#else
- #define TR_PATH_DELIMITER '/'
- #define TR_PATH_DELIMITER_STR "/"
-#endif
+#define TR_PATH_DELIMITER '/'
+#define TR_PATH_DELIMITER_STR "/"
 
 #ifdef WIN32
- #include <windows.h>
- #define MAX_PATH_LENGTH  MAX_PATH
+ #include <windef.h> /* MAX_PATH */
+ #define TR_PATH_MAX (MAX_PATH + 1)
 #else
- #define MAX_PATH_LENGTH  2048
+ #include <limits.h> /* PATH_MAX */
+ #ifdef PATH_MAX
+  #define TR_PATH_MAX PATH_MAX
+ #else
+  #define TR_PATH_MAX 4096
+ #endif
 #endif
 
 /**
@@ -41,7 +41,7 @@
  * @brief invoked by tr_sessionInit() to set up the locations of the resume, torrent, and clutch directories.
  * @see tr_getResumeDir()
  * @see tr_getTorrentDir()
- * @see tr_getClutchDir()
+ * @see tr_getWebClientDir()
  */
 void tr_setConfigDir( tr_session * session, const char * configDir );
 
@@ -51,8 +51,8 @@ const char * tr_getResumeDir( const tr_session * );
 /** @brief return the directory where .torrent files are stored */
 const char * tr_getTorrentDir( const tr_session * );
 
-/** @brief return the directory where Clutch's web ui files are kept */
-const char * tr_getClutchDir( const tr_session * );
+/** @brief return the directory where the Web Client's web ui files are kept */
+const char * tr_getWebClientDir( const tr_session * );
 
 /** @} */
 
@@ -69,7 +69,7 @@ tr_thread* tr_threadNew( void ( *func )(void *), void * arg );
 
 /** @brief Return nonzero if this function is being called from `thread'
     @param thread the thread being tested */
-int tr_amInThread( const tr_thread * );
+tr_bool tr_amInThread( const tr_thread * );
 
 /***
 ****

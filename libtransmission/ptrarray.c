@@ -73,18 +73,18 @@ tr_ptrArrayInsert( tr_ptrArray * t,
                    void        * ptr,
                    int           pos )
 {
-    if( pos < 0 || pos > t->n_items )
-        pos = t->n_items;
-
     if( t->n_items >= t->n_alloc )
     {
         t->n_alloc = MAX( FLOOR, t->n_alloc * 2 );
         t->items = tr_renew( void*, t->items, t->n_alloc );
     }
 
-    memmove( t->items + pos + 1,
-             t->items + pos,
-             sizeof( void* ) * ( t->n_items - pos ) );
+    if( pos < 0 || pos > t->n_items )
+        pos = t->n_items;
+    else
+        memmove( t->items + pos + 1,
+                 t->items + pos,
+                 sizeof( void* ) * ( t->n_items - pos ) );
 
     t->items[pos] = ptr;
     t->n_items++;
@@ -102,7 +102,7 @@ tr_ptrArrayPop( tr_ptrArray* t )
     return ret;
 }
 
-static void
+void
 tr_ptrArrayErase( tr_ptrArray * t,
                   int           begin,
                   int           end )
@@ -123,7 +123,7 @@ tr_ptrArrayErase( tr_ptrArray * t,
 ***
 **/
 
-static int
+int
 tr_ptrArrayLowerBound( const tr_ptrArray *                t,
                        const void *                       ptr,
                        int                 compare( const void *,
@@ -184,7 +184,7 @@ tr_ptrArrayInsertSorted( tr_ptrArray * t,
     const int pos = tr_ptrArrayLowerBound( t, ptr, compare, NULL );
     const int ret = tr_ptrArrayInsert( t, ptr, pos );
 
-    assertSortedAndUnique( t, compare );
+    //assertSortedAndUnique( t, compare );
     return ret;
 }
 

@@ -25,7 +25,7 @@ enum
     METADATA_PIECE_SIZE = ( 1024 * 16 )
 };
 
-void* tr_torrentGetMetadataPiece( const tr_torrent * tor, int piece, int * len );
+void* tr_torrentGetMetadataPiece( tr_torrent * tor, int piece, int * len );
 
 void tr_torrentSetMetadataPiece( tr_torrent * tor, int piece, const void * data, int len );
 
@@ -33,6 +33,6 @@ tr_bool tr_torrentGetNextMetadataRequest( tr_torrent * tor, time_t now, int * se
 
 void tr_torrentSetMetadataSizeHint( tr_torrent * tor, int metadata_size );
 
-float tr_torrentGetMetadataPercent( const tr_torrent * tor );
+double tr_torrentGetMetadataPercent( const tr_torrent * tor );
 
 #endif

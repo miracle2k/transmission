@@ -25,13 +25,19 @@ THE SOFTWARE.
 #include <stdio.h>
 
 /* posix */
-#include <netinet/in.h> /* sockaddr_in */
 #include <signal.h> /* sig_atomic_t */
 #include <sys/time.h>
-#include <sys/types.h>
-#include <sys/socket.h> /* socket(), bind() */
-#include <netdb.h>
 #include <unistd.h> /* close() */
+#ifdef WIN32
+  #include <inttypes.h>
+  #define _WIN32_WINNT  0x0501	/* freeaddrinfo(),getaddrinfo(),getnameinfo() */
+  #include <ws2tcpip.h>
+#else
+  #include <sys/types.h>
+  #include <sys/socket.h> /* socket(), bind() */
+  #include <netdb.h>
+  #include <netinet/in.h> /* sockaddr_in */
+#endif
 
 /* third party */
 #include <event.h>
@@ -81,12 +87,11 @@ bootstrap_done( tr_session *session, int af )
 }
 
 static void
-nap( int roughly )
+nap( int roughly_sec )
 {
-    struct timeval tv;
-    tv.tv_sec = roughly / 2 + tr_cryptoWeakRandInt( roughly );
-    tv.tv_usec = tr_cryptoWeakRandInt( 1000000 );
-    select( 0, NULL, NULL, NULL, &tv );
+    const int roughly_msec = roughly_sec * 1000;
+    const int msec = roughly_msec/2 + tr_cryptoWeakRandInt(roughly_msec);
+    tr_wait_msec( msec );
 }
 
 static int
@@ -101,7 +106,7 @@ bootstrap_af(tr_session *session)
 }
 
 static void
-bootstrap_from_name( const char *name, short int port, int af )
+bootstrap_from_name( const char *name, tr_port port, int af )
 {
     struct addrinfo hints, *info, *infop;
     char pp[10];
@@ -111,7 +116,7 @@ bootstrap_from_name( const char *name, short int port, int af )
     hints.ai_socktype = SOCK_DGRAM;
     hints.ai_family = af;
     /* No, just passing p + 1 to gai won't work. */
-    tr_snprintf(pp, sizeof(pp), "%d", port);
+    tr_snprintf(pp, sizeof(pp), "%d", (int)port);
 
     rc = getaddrinfo(name, pp, &hints, &info);
     if(rc != 0) {
@@ -193,7 +198,7 @@ dht_bootstrap(void *closure)
             tr_buildPath(cl->session->configDir, "dht.bootstrap", NULL);
 
         if(bootstrap_file)
-            f = fopen(bootstrap_file, "r");
+            f = fopen(bootstrap_file, "rb");
         if(f != NULL) {
             tr_ninf("DHT", "Attempting manual bootstrap");
             for(;;) {
@@ -248,39 +253,62 @@ dht_bootstrap(void *closure)
    IPv6 address, if I may say so myself. */
 
 static int
-rebind_ipv6(int force)
+rebind_ipv6(tr_bool force)
 {
     struct sockaddr_in6 sin6;
     const unsigned char *ipv6 = tr_globalIPv6();
     static unsigned char *last_bound = NULL;
-    int rc;
+    int s, rc;
+    int one = 1;
 
-    if(dht6_socket < 0)
+    /* We currently have no way to enable or disable IPv6 once the DHT has
+       been initialised.  Oh, well. */
+    if(ipv6 == NULL || (!force && dht6_socket < 0)) {
+        if(last_bound) {
+            free(last_bound);
+            last_bound = NULL;
+        }
+        return 0;
+    }
+
+    if(last_bound != NULL && memcmp(ipv6, last_bound, 16) == 0)
         return 0;
 
-    if(!force &&
-       ((ipv6 == NULL && last_bound == NULL) ||
-        (ipv6 != NULL && last_bound != NULL &&
-         memcmp(ipv6, last_bound, 16) == 0)))
-        return 0;
+    s = socket(PF_INET6, SOCK_DGRAM, 0);
+    if(s < 0)
+        return -1;
+
+#ifdef IPV6_V6ONLY
+        /* Since we always open an IPv4 socket on the same port, this
+           shouldn't matter.  But I'm superstitious. */
+        setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY, &one, sizeof(one));
+#endif
 
     memset(&sin6, 0, sizeof(sin6));
     sin6.sin6_family = AF_INET6;
     if(ipv6)
         memcpy(&sin6.sin6_addr, ipv6, 16);
     sin6.sin6_port = htons(dht_port);
-    rc = bind(dht6_socket, (struct sockaddr*)&sin6, sizeof(sin6));
+    rc = bind(s, (struct sockaddr*)&sin6, sizeof(sin6));
 
-    if(last_bound)
-        free(last_bound);
-    last_bound = NULL;
+    if(rc < 0)
+        return -1;
 
-    if(rc >= 0 && ipv6) {
-        last_bound = malloc(16);
-        if(last_bound)
-            memcpy(last_bound, ipv6, 16);
+    if(dht6_socket < 0) {
+        dht6_socket = s;
+    } else {
+        rc = dup2(s, dht6_socket);
+        close(s);
+        if(rc < 0)
+            return -1;
     }
-    return rc;
+
+    if(last_bound == NULL)
+        last_bound = malloc(16);
+    if(last_bound)
+        memcpy(last_bound, ipv6, 16);
+
+    return 1;
 }
 
 int
@@ -318,22 +346,8 @@ tr_dhtInit(tr_session *ss, const tr_address * tr_addr)
     if(rc < 0)
         goto fail;
 
-    if(tr_globalIPv6()) {
-        int one = 1;
-        dht6_socket = socket(PF_INET6, SOCK_DGRAM, 0);
-        if(dht6_socket < 0)
-            goto fail;
-
-#ifdef IPV6_V6ONLY
-        /* Since we always open an IPv4 socket on the same port, this
-           shouldn't matter.  But I'm superstitious. */
-        setsockopt(dht6_socket, IPPROTO_IPV6, IPV6_V6ONLY,
-                   &one, sizeof(one));
-#endif
-
-        rebind_ipv6(1);
-
-    }
+    if(tr_globalIPv6())
+        rebind_ipv6(TRUE);
 
     if( getenv( "TR_DHT_VERBOSE" ) != NULL )
         dht_debug = stderr;
@@ -529,7 +543,7 @@ tr_dhtStatus( tr_session * session, int af, int * nodes_return )
 
     tr_runInEventThread( session, getstatus, &closure );
     while( closure.status < 0 )
-        tr_wait_msec( 10 /*msec*/ );
+        tr_wait_msec( 50 /*msec*/ );
 
     if( nodes_return )
         *nodes_return = closure.count;
@@ -613,7 +627,7 @@ callback( void *ignore UNUSED, int event,
             else
                 pex = tr_peerMgrCompact6ToPex(data, data_len, NULL, 0, &n);
             for( i=0; i<n; ++i )
-                tr_peerMgrAddPex( tor, TR_PEER_FROM_DHT, pex+i );
+                tr_peerMgrAddPex( tor, TR_PEER_FROM_DHT, pex+i, -1 );
             tr_free(pex);
             tr_tordbg(tor, "Learned %d%s peers from DHT",
                       (int)n,
@@ -698,8 +712,8 @@ event_callback(int s, short type, void *ignore UNUSED )
     /* Only do this once in a while.  Counting rather than measuring time
        avoids a system call. */
     count++;
-    if(count >= 128) {
-        rebind_ipv6(0);
+    if(count >= 20) {
+        rebind_ipv6(FALSE);
         count = 0;
     }
 

@@ -32,9 +32,12 @@
 #include <sys/types.h>
 
 #ifdef WIN32
- #include <winsock2.h> /* inet_addr */
- #include <WS2tcpip.h>
+ #define _WIN32_WINNT   0x0501
+ #include <ws2tcpip.h>
 #else
+ #include <sys/socket.h>
+ #include <netinet/in.h>
+ #include <netinet/tcp.h>
  #include <arpa/inet.h> /* inet_addr */
  #include <netdb.h>
  #include <fcntl.h>
@@ -61,8 +64,8 @@ const tr_address tr_in6addr_any = { TR_AF_INET6, { IN6ADDR_ANY_INIT } };
 const tr_address tr_inaddr_any = { TR_AF_INET, { { { { INADDR_ANY, 0x00, 0x00, 0x00 } } } } };
 
 #ifdef WIN32
-static const char *
-inet_ntop( int af, const void *src, char *dst, socklen_t cnt )
+const char *
+inet_ntop( int af, const void * src, char * dst, socklen_t cnt )
 {
     if (af == AF_INET)
     {
@@ -87,33 +90,47 @@ inet_ntop( int af, const void *src, char *dst, socklen_t cnt )
     return NULL;
 }
 
-static int
-inet_pton(int af, const char *src, void *dst)
+int
+inet_pton( int af, const char * src, void * dst )
 {
-    struct addrinfo hints;
-    struct addrinfo *res;
-    struct addrinfo *ressave;
+    struct addrinfo hints, *res, *ressave;
+    struct sockaddr_in * s4;
+    struct sockaddr_in6 * s6;
 
-    memset(&hints, 0, sizeof(struct addrinfo));
+    memset( &hints, 0, sizeof( struct addrinfo ));
     hints.ai_family = af;
+    hints.ai_flags = AI_NUMERICHOST;
 
-    if (getaddrinfo(src, NULL, &hints, &res) != 0)
-        return -1;
+    if( getaddrinfo( src, NULL, &hints, &res ) ) {
+        if( WSAGetLastError() == WSAHOST_NOT_FOUND )
+            return 0;
+        else {
+            errno = EAFNOSUPPORT;
+            return -1;
+        }
+    }
 
     ressave = res;
-
-    while (res)
-    {
-        memcpy(dst, res->ai_addr, res->ai_addrlen);
+    while( res ) {
+        switch (res->ai_family) {
+            case AF_INET:
+                s4 = (struct sockaddr_in *) res->ai_addr;
+                memcpy( dst, &s4->sin_addr, sizeof( struct in_addr ) );
+                break;
+            case AF_INET6:
+                s6 = (struct sockaddr_in6 *) res->ai_addr;
+                memcpy( dst, &s6->sin6_addr, sizeof( struct in6_addr ) );
+                break;
+            default: /* AF_UNSPEC, AF_NETBIOS */
+                break;
+        }
         res = res->ai_next;
     }
 
     freeaddrinfo(ressave);
-    return 0;
+    return 1;
 }
-
 #endif
-
 
 void
 tr_netInit( void )
@@ -128,6 +145,18 @@ tr_netInit( void )
 #endif
         initialized = TRUE;
     }
+}
+
+char *
+tr_net_strerror( char * buf, size_t buflen, int err )
+{
+    *buf = '\0';
+#ifdef WIN32
+    FormatMessage( FORMAT_MESSAGE_FROM_SYSTEM, NULL, err, 0, buf, buflen, NULL );
+#else
+    tr_strlcpy( buf, tr_strerror( err ), buflen );
+#endif
+    return buf;
 }
 
 const char *
@@ -186,9 +215,6 @@ tr_compareAddresses( const tr_address * a, const tr_address * b)
 {
     static const int sizes[2] = { sizeof(struct in_addr), sizeof(struct in6_addr) };
 
-    assert( tr_isAddress( a ) );
-    assert( tr_isAddress( b ) );
-
     /* IPv6 addresses are always "greater than" IPv4 */
     if( a->type != b->type )
         return a->type == TR_AF_INET ? 1 : -1;
@@ -207,6 +233,18 @@ tr_netSetTOS( int s, int tos )
     return setsockopt( s, IPPROTO_IP, IP_TOS, (char*)&tos, sizeof( tos ) );
 #else
     return 0;
+#endif
+}
+
+int
+tr_netSetCongestionControl( int s, const char *algorithm )
+{
+#ifdef TCP_CONGESTION
+    return setsockopt( s, IPPROTO_TCP, TCP_CONGESTION,
+                       algorithm, strlen(algorithm) + 1 );
+#else
+    errno = ENOSYS;
+    return -1;
 #endif
 }
 
@@ -382,7 +420,7 @@ tr_netBindTCPImpl( const tr_address * addr, tr_port port, tr_bool suppressMsgs, 
                 fmt = _( "Couldn't bind port %d on %s: %s" );
             else
                 fmt = _( "Couldn't bind port %d on %s: %s (%s)" );
-            
+
             tr_err( fmt, port, tr_ntop_non_ts( addr ), tr_strerror( err ), hint );
         }
         tr_netCloseSocket( fd );
@@ -458,11 +496,10 @@ tr_netClose( tr_session * session, int s )
 }
 
 /*
-   get_source_address(), get_name_source_address(), and
-   global_unicast_address() were written by Juliusz Chroboczek,
-   and are covered under the same license as dht.c.
-   Please feel free to copy them into your software
-   if it can help unbreaking the double-stack Internet. */
+   get_source_address() and global_unicast_address() were written by
+   Juliusz Chroboczek, and are covered under the same license as dht.c.
+   Please feel free to copy them into your software if it can help
+   unbreaking the double-stack Internet. */
 
 /* Get the source address used for a given destination address.  Since
    there is no official interface to get this information, we create
@@ -500,41 +537,6 @@ get_source_address( const struct sockaddr  * dst,
     return -1;
 }
 
-/* Like above, but for a given DNS name. */
-static int
-get_name_source_address(int af, const char *name,
-                        struct sockaddr *src, socklen_t *src_len)
-{
-    struct addrinfo hints, *info, *infop;
-    int rc;
-
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = af;
-    hints.ai_socktype = SOCK_DGRAM;
-
-    rc = getaddrinfo(name, "80", &hints, &info);
-    if(rc != 0) {
-        errno = ENOENT;
-        return -1;
-    }
-
-    rc = -1;
-    errno = ENOENT;
-    infop = info;
-    while(infop) {
-        if(infop->ai_addr->sa_family == af) {
-            rc = get_source_address(infop->ai_addr, infop->ai_addrlen,
-                                    src, src_len);
-            if(rc >= 0)
-                break;
-        }
-        infop = infop->ai_next;
-    }
-
-    freeaddrinfo(info);
-    return rc;
-}
-
 /* We all hate NATs. */
 static int
 global_unicast_address(struct sockaddr *sa)
@@ -562,16 +564,37 @@ static int
 tr_globalAddress( int af, void *addr, int *addr_len )
 {
     struct sockaddr_storage ss;
-    socklen_t ss_len = sizeof(ss);
+    socklen_t sslen = sizeof(ss);
+    struct sockaddr_in sin;
+    struct sockaddr_in6 sin6;
+    struct sockaddr *sa;
+    socklen_t salen;
     int rc;
 
-    /* This should be a name with both IPv4 and IPv6 addresses. */
-    rc = get_name_source_address( af, "www.transmissionbt.com",
-                                  (struct sockaddr*)&ss, &ss_len );
-    /* In case Charles removes IPv6 from his website. */
-    if( rc < 0 )
-        rc = get_name_source_address(  af, "www.ietf.org",
-                                      (struct sockaddr*)&ss, &ss_len );
+    switch(af) {
+    case AF_INET:
+        memset(&sin, 0, sizeof(sin));
+        sin.sin_family = AF_INET;
+        inet_pton(AF_INET, "91.121.74.28", &sin.sin_addr);
+        sin.sin_port = htons(6969);
+        sa = (struct sockaddr*)&sin;
+        salen = sizeof(sin);
+        break;
+    case AF_INET6:
+        memset(&sin6, 0, sizeof(sin6));
+        sin6.sin6_family = AF_INET6;
+        /* In order for address selection to work right, this should be
+           a native IPv6 address, not Teredo or 6to4. */
+        inet_pton(AF_INET6, "2001:1890:1112:1::20", &sin6.sin6_addr);
+        sin6.sin6_port = htons(6969);
+        sa = (struct sockaddr*)&sin6;
+        salen = sizeof(sin6);
+        break;
+    default:
+        return -1;
+    }
+
+    rc = get_source_address( sa, salen, (struct sockaddr*)&ss, &sslen );
 
     if( rc < 0 )
         return -1;

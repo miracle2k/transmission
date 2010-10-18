@@ -1,26 +1,14 @@
-/******************************************************************************
+/*
+ * This file Copyright (C) 2010 Mnemosyne LLC
+ *
+ * This file is licensed by the GPL version 2.  Works owned by the
+ * Transmission project are granted a special exemption to clause 2(b)
+ * so that the bulk of its code can remain under the MIT license.
+ * This exemption does not extend to derived works not owned by
+ * the Transmission project.
+ *
  * $Id$
- *
- * Copyright (c) 2005-2010 Transmission authors and contributors
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
- * DEALINGS IN THE SOFTWARE.
- *****************************************************************************/
+ */
 
 #ifndef WIN32
  #define HAVE_GETRLIMIT
@@ -61,13 +49,10 @@
 #include <fcntl.h> /* O_LARGEFILE posix_fadvise */
 #include <unistd.h>
 
-#include <stdarg.h> /* some 1.4.x versions of evutil.h need this */
-#include <evutil.h>
-
 #include "transmission.h"
 #include "fdlimit.h"
 #include "net.h"
-#include "platform.h" /* MAX_PATH_LENGTH, TR_PATH_DELIMITER */
+#include "platform.h" /* TR_PATH_MAX, TR_PATH_DELIMITER */
 #include "session.h"
 #include "torrent.h" /* tr_isTorrent() */
 #include "utils.h"
@@ -87,7 +72,7 @@ struct tr_openfile
     tr_bool          isWritable;
     int              torrentId;
     tr_file_index_t  fileNum;
-    char             filename[MAX_PATH_LENGTH];
+    char             filename[TR_PATH_MAX];
     int              fd;
     uint64_t         date;
 };
@@ -115,18 +100,22 @@ static tr_bool
 preallocateFileSparse( int fd, uint64_t length )
 {
     const char zero = '\0';
+    tr_bool success = 0;
 
-    if( length == 0 )
-        return TRUE;
+    if( !length )
+        success = TRUE;
 
-    if( lseek( fd, length-1, SEEK_SET ) == -1 )
-        return FALSE;
-    if( write( fd, &zero, 1 ) == -1 )
-        return FALSE;
-    if( ftruncate( fd, length ) == -1 )
-        return FALSE;
+#ifdef HAVE_FALLOCATE64
+    if( !success ) /* fallocate64 is always preferred, so try it first */
+        success = !fallocate64( fd, 0, 0, length );
+#endif
 
-    return TRUE;
+    if( !success ) /* fallback: the old-style seek-and-write */
+        success = ( lseek( fd, length-1, SEEK_SET ) != -1 )
+               && ( write( fd, &zero, 1 ) != -1 )
+               && ( ftruncate( fd, length ) != -1 );
+
+    return success;
 }
 
 static tr_bool
@@ -136,7 +125,7 @@ preallocateFileFull( const char * filename, uint64_t length )
 
 #ifdef WIN32
 
-    HANDLE hFile = CreateFile( filename, GENERIC_WRITE, 0, 0, CREATE_NEW, 0, 0 );
+    HANDLE hFile = CreateFile( filename, GENERIC_WRITE, 0, 0, CREATE_NEW, FILE_FLAG_RANDOM_ACCESS, 0 );
     if( hFile != INVALID_HANDLE_VALUE )
     {
         LARGE_INTEGER li;
@@ -207,12 +196,6 @@ preallocateFileFull( const char * filename, uint64_t length )
     return success;
 }
 
-tr_bool
-tr_preallocate_file( const char * filename, uint64_t length )
-{
-    return preallocateFileFull( filename, length );
-}
-
 /* Like pread and pwrite, except that the position is undefined afterwards.
    And of course they are not thread-safe. */
 
@@ -235,7 +218,7 @@ tr_pread( int fd, void *buf, size_t count, off_t offset )
 }
 
 ssize_t
-tr_pwrite( int fd, void *buf, size_t count, off_t offset )
+tr_pwrite( int fd, const void *buf, size_t count, off_t offset )
 {
 #ifdef HAVE_PWRITE
     return pwrite( fd, buf, count, offset );
@@ -323,7 +306,11 @@ tr_close_file( int fd )
     posix_fadvise( fd, 0, 0, POSIX_FADV_DONTNEED );
     errno = err;
 #endif
-    fsync( fd );
+#ifdef SYS_DARWIN
+    /* it's unclear to me from the man pages if this actually flushes out the cache,
+     * but it couldn't hurt... */
+    fcntl( fd, F_NOCACHE, 1 );
+#endif
     close( fd );
 }
 
@@ -412,6 +399,24 @@ TrOpenFile( tr_session             * session,
     }
 #endif
 
+#if defined( SYS_DARWIN ) 
+    /**
+     * 1. Enable readahead for reasons described above w/POSIX_FADV_SEQUENTIAL.
+     *
+     * 2. Disable OS-level caching due to user reports of adverse effects of
+     *    excessive inactive memory.  However this is experimental because
+     *    previous attempts at this have *also* had adverse effects (see r8198)
+     *
+     * It's okay for this to fail silently, so don't let it affect errno
+     */
+    {
+        const int err = errno;
+        fcntl( file->fd, F_NOCACHE, 1 ); 
+        fcntl( file->fd, F_RDAHEAD, 1 ); 
+        errno = err;
+    }
+#endif
+
     return 0;
 }
 
@@ -469,7 +474,7 @@ tr_fdFileGetCached( tr_session       * session,
 
     if( ( match != NULL ) && ( !doWrite || match->isWritable ) )
     {
-        match->date = tr_date( );
+        match->date = tr_time_msec( );
         return match->fd;
     }
 
@@ -527,7 +532,7 @@ tr_fdFileCheckout( tr_session             * session,
     dbgmsg( "it's not already open.  looking for an open slot or an old file." );
     while( winner < 0 )
     {
-        uint64_t date = tr_date( ) + 1;
+        uint64_t date = tr_time_msec( ) + 1;
 
         /* look for the file that's been open longest */
         for( i=0; i<gFd->openFileLimit; ++i )
@@ -577,7 +582,7 @@ tr_fdFileCheckout( tr_session             * session,
     dbgmsg( "checking out '%s' in slot %d", filename, winner );
     o->torrentId = torrentId;
     o->fileNum = fileNum;
-    o->date = tr_date( );
+    o->date = tr_time_msec( );
     return o->fd;
 }
 

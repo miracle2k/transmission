@@ -21,12 +21,13 @@
 #include <unistd.h>
 #include <dirent.h>
 
-#include "crypto.h" /* tr_sha1 */
 #include "transmission.h"
+#include "crypto.h" /* tr_sha1 */
+#include "fdlimit.h" /* tr_open_file_for_scanning() */
 #include "session.h"
 #include "bencode.h"
 #include "makemeta.h"
-#include "platform.h" /* threads, locks */
+#include "platform.h" /* threads, locks, TR_PATH_MAX */
 #include "utils.h" /* buildpath */
 #include "version.h"
 
@@ -87,12 +88,12 @@ getFiles( const char *      dir,
     return list;
 }
 
-static int
+static uint32_t
 bestPieceSize( uint64_t totalSize )
 {
-    const uint64_t GiB = 1073741824;
-    const uint64_t MiB = 1048576;
-    const uint64_t KiB = 1024;
+    const uint32_t GiB = 1073741824;
+    const uint32_t MiB = 1048576;
+    const uint32_t KiB = 1024;
 
     if( totalSize >=   ( 2 * GiB ) ) return 2 * MiB;
     if( totalSize >=   ( 1 * GiB ) ) return 1 * MiB;
@@ -203,7 +204,7 @@ getHashInfo( tr_metainfo_builder * b )
     uint8_t *buf;
     uint64_t totalRemain;
     uint64_t off = 0;
-    FILE *   fp;
+    int fd;
 
     if( !b->totalSize )
         return ret;
@@ -211,8 +212,8 @@ getHashInfo( tr_metainfo_builder * b )
     buf = tr_valloc( b->pieceSize );
     b->pieceIndex = 0;
     totalRemain = b->totalSize;
-    fp = fopen( b->files[fileIndex].filename, "rb" );
-    if( !fp )
+    fd = tr_open_file_for_scanning( b->files[fileIndex].filename );
+    if( fd < 0 )
     {
         b->my_errno = errno;
         tr_strlcpy( b->errfile,
@@ -225,30 +226,28 @@ getHashInfo( tr_metainfo_builder * b )
     }
     while( totalRemain )
     {
-        uint8_t *      bufptr = buf;
-        const uint64_t thisPieceSize =
-            MIN( (uint32_t)b->pieceSize, totalRemain );
-        uint64_t       pieceRemain = thisPieceSize;
+        uint8_t * bufptr = buf;
+        const uint32_t thisPieceSize = (uint32_t) MIN( b->pieceSize, totalRemain );
+        uint32_t leftInPiece = thisPieceSize;
 
         assert( b->pieceIndex < b->pieceCount );
 
-        while( pieceRemain )
+        while( leftInPiece )
         {
-            const uint64_t n_this_pass =
-                MIN( ( b->files[fileIndex].size - off ), pieceRemain );
-            fread( bufptr, 1, n_this_pass, fp );
+            const size_t n_this_pass = (size_t) MIN( ( b->files[fileIndex].size - off ), leftInPiece );
+            read( fd, bufptr, n_this_pass );
             bufptr += n_this_pass;
             off += n_this_pass;
-            pieceRemain -= n_this_pass;
+            leftInPiece -= n_this_pass;
             if( off == b->files[fileIndex].size )
             {
                 off = 0;
-                fclose( fp );
-                fp = NULL;
+                tr_close_file( fd );
+                fd = -1;
                 if( ++fileIndex < b->fileCount )
                 {
-                    fp = fopen( b->files[fileIndex].filename, "rb" );
-                    if( !fp )
+                    fd = tr_open_file_for_scanning( b->files[fileIndex].filename );
+                    if( fd < 0 )
                     {
                         b->my_errno = errno;
                         tr_strlcpy( b->errfile,
@@ -264,7 +263,7 @@ getHashInfo( tr_metainfo_builder * b )
         }
 
         assert( bufptr - buf == (int)thisPieceSize );
-        assert( pieceRemain == 0 );
+        assert( leftInPiece == 0 );
         tr_sha1( walk, buf, thisPieceSize, NULL );
         walk += SHA_DIGEST_LENGTH;
 
@@ -282,8 +281,8 @@ getHashInfo( tr_metainfo_builder * b )
           || ( walk - ret == (int)( SHA_DIGEST_LENGTH * b->pieceCount ) ) );
     assert( b->abortFlag || !totalRemain );
 
-    if( fp )
-        fclose( fp );
+    if( fd >= 0 )
+        tr_close_file( fd );
 
     tr_free( buf );
     return ret;
@@ -315,7 +314,7 @@ getFileInfo( const char *                     topFile,
     tr_bencInitList( uninitialized_path, n );
     for( prev = pch = file->filename + topLen; ; ++pch )
     {
-        char buf[MAX_PATH_LENGTH];
+        char buf[TR_PATH_MAX];
 
         if( *pch && *pch != TR_PATH_DELIMITER )
             continue;
@@ -337,12 +336,15 @@ makeInfoDict( tr_benc *             dict,
 {
     uint8_t * pch;
     char    * base;
+    const tr_bool single_file_mode = ( builder->fileCount == 1 ) && ( strchr( builder->files[0].filename, '/' ) == NULL );
 
     tr_bencDictReserve( dict, 5 );
 
-    if( builder->fileCount == 1 )
+    if( single_file_mode )
+    {
         tr_bencDictAddInt( dict, "length", builder->files[0].size );
-    else
+    }
+    else /* multiple file mode */
     {
         uint32_t  i;
         tr_benc * list = tr_bencDictAddList( dict, "files",
@@ -388,6 +390,15 @@ tr_realMakeMetaInfo( tr_metainfo_builder * builder )
     }
 
     tr_bencInitDict( &top, 6 );
+
+    if( !builder->fileCount || !builder->totalSize ||
+        !builder->pieceSize || !builder->pieceCount )
+    {
+        builder->errfile[0] = '\0';
+        builder->my_errno = ENOENT;
+        builder->result = TR_MAKEMETA_IO_READ;
+        builder->isDone = TRUE;
+    }
 
     if( !builder->result && builder->trackerCount )
     {
@@ -515,8 +526,7 @@ tr_makeMetaInfo( tr_metainfo_builder *   builder,
     builder->pieceIndex = 0;
     builder->trackerCount = trackerCount;
     builder->trackers = tr_new0( tr_tracker_info, builder->trackerCount );
-    for( i = 0; i < builder->trackerCount; ++i )
-    {
+    for( i = 0; i < builder->trackerCount; ++i ) {
         builder->trackers[i].tier = trackers[i].tier;
         builder->trackers[i].announce = tr_strdup( trackers[i].announce );
     }

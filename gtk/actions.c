@@ -21,12 +21,13 @@
 #include "conf.h"
 #include "tr-core.h"
 #include "tr-prefs.h"
-#include "lock.h"
 
-#include "logo.h"
-#include "ratio-icon.h"
-#include "options-icon.h"
-#include "turtles.h"
+#include "icon-lock.h"
+#include "icon-logo-24.h"
+#include "icon-logo-48.h"
+#include "icon-ratio.h"
+#include "icon-turtle.h"
+#include "icon-utilities.h"
 
 #define UNUSED G_GNUC_UNUSED
 
@@ -56,10 +57,9 @@ static GtkRadioActionEntry sort_radio_entries[] =
     { "sort-by-progress",  NULL, N_( "Sort by _Progress" ),  NULL, NULL, 2 },
     { "sort-by-ratio",     NULL, N_( "Sort by Rati_o" ),     NULL, NULL, 3 },
     { "sort-by-state",     NULL, N_( "Sort by Stat_e" ),     NULL, NULL, 4 },
-    { "sort-by-tracker",   NULL, N_( "Sort by T_racker" ),   NULL, NULL, 5 },
-    { "sort-by-age",       NULL, N_( "Sort by A_ge" ),       NULL, NULL, 6 },
-    { "sort-by-time-left", NULL, N_( "Sort by Time _Left" ), NULL, NULL, 7 },
-    { "sort-by-size",      NULL, N_( "Sort by Si_ze" ),      NULL, NULL, 8 }
+    { "sort-by-age",       NULL, N_( "Sort by A_ge" ),       NULL, NULL, 5 },
+    { "sort-by-time-left", NULL, N_( "Sort by Time _Left" ), NULL, NULL, 6 },
+    { "sort-by-size",      NULL, N_( "Sort by Si_ze" ),      NULL, NULL, 7 }
 };
 
 static void
@@ -93,7 +93,7 @@ toggle_pref_cb( GtkToggleAction *  action,
 static GtkToggleActionEntry  pref_toggle_entries[] =
 {
     { "alt-speed-enabled", NULL, N_( "Enable Temporary Speed _Limits" ), NULL, NULL, G_CALLBACK( toggle_pref_cb ), FALSE },
-    { "minimal-view",      NULL, N_( "_Minimal View" ), "<alt>M", NULL, G_CALLBACK( toggle_pref_cb ), FALSE },
+    { "compact-view",      NULL, N_( "_Compact View" ), "<alt>C", NULL, G_CALLBACK( toggle_pref_cb ), FALSE },
     { "sort-reversed",     NULL, N_( "Re_verse Sort Order" ), NULL, NULL, G_CALLBACK( toggle_pref_cb ), FALSE },
     { "show-filterbar",    NULL, N_( "_Filterbar" ), NULL, NULL, G_CALLBACK( toggle_pref_cb ), FALSE },
     { "show-statusbar",    NULL, N_( "_Statusbar" ), NULL, NULL, G_CALLBACK( toggle_pref_cb ), FALSE },
@@ -119,7 +119,7 @@ static GtkActionEntry entries[] =
     { "pause-torrent", GTK_STOCK_MEDIA_PAUSE, N_( "_Pause" ), "<control>P", N_( "Pause torrent" ), G_CALLBACK( action_cb ) },
     { "pause-all-torrents", GTK_STOCK_MEDIA_PAUSE, N_( "_Pause All" ), NULL, N_( "Pause all torrents" ), G_CALLBACK( action_cb ) },
     { "start-all-torrents", GTK_STOCK_MEDIA_PLAY, N_( "_Start All" ), NULL, N_( "Start all torrents" ), G_CALLBACK( action_cb ) },
-    { "relocate-torrent", NULL, N_("Set _Location" ), NULL, NULL, G_CALLBACK( action_cb ) },
+    { "relocate-torrent", NULL, N_("Set _Location..." ), NULL, NULL, G_CALLBACK( action_cb ) },
     { "remove-torrent", GTK_STOCK_REMOVE, NULL, "Delete", N_( "Remove torrent" ), G_CALLBACK( action_cb ) },
     { "delete-torrent", GTK_STOCK_DELETE, N_( "_Delete Files and Remove" ), "<shift>Delete", NULL, G_CALLBACK( action_cb ) },
     { "new-torrent", GTK_STOCK_NEW, N_( "_New..." ), NULL, N_( "Create a torrent" ), G_CALLBACK( action_cb ) },
@@ -132,7 +132,6 @@ static GtkActionEntry entries[] =
     { "show-about-dialog", GTK_STOCK_ABOUT, NULL, NULL, NULL, G_CALLBACK( action_cb ) },
     { "help", GTK_STOCK_HELP, N_( "_Contents" ), "F1", NULL, G_CALLBACK( action_cb ) },
     { "update-tracker", GTK_STOCK_NETWORK, N_( "Ask Tracker for _More Peers" ), NULL, NULL, G_CALLBACK( action_cb ) },
-    { "present-main-window", NULL, NULL, NULL, NULL, G_CALLBACK( action_cb ) },
 };
 
 typedef struct
@@ -144,14 +143,14 @@ BuiltinIconInfo;
 
 static const BuiltinIconInfo my_fallback_icons[] =
 {
-    { tr_icon_logo, WINDOW_ICON         },
-    { tr_icon_logo, TRAY_ICON           },
-    { tr_icon_logo, NOTIFICATION_ICON   },
-    { tr_icon_lock, "transmission-lock" },
-    { options_icon, "options"           },
-    { blue_turtle,  "alt-speed-on"      },
-    { grey_turtle,  "alt-speed-off"     },
-    { ratio_icon,   "ratio"             }
+    { tr_icon_logo_48,  WINDOW_ICON          },
+    { tr_icon_logo_24,  TRAY_ICON            },
+    { tr_icon_logo_48,  NOTIFICATION_ICON    },
+    { tr_icon_lock,     "transmission-lock"  },
+    { utilities_icon,   "utilities"          },
+    { blue_turtle,      "alt-speed-on"       },
+    { grey_turtle,      "alt-speed-off"      },
+    { ratio_icon,       "ratio"              }
 };
 
 static void

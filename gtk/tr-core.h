@@ -43,43 +43,13 @@
                                                          TR_CORE_TYPE, \
                                                          TrCoreClass )
 
-typedef struct TrCore
+typedef struct _TrCore
 {
-    GObject    parent;
+    GObject parent;
+
     struct TrCorePrivate  * priv;
 }
 TrCore;
-
-typedef struct TrCoreClass
-{
-    GObjectClass    parent;
-
-    /* "blocklist-updated" signal with a callback type of
-        void (*callback )( TrCore*, int ruleCount, gpointer userData ). */
-    int blocklistSignal;
-
-    /* "port-tested" signal with a callback type of
-       void( *callback )( TrCore*, gboolean isOpen, gpointer userData ). */
-    int portSignal;
-
-    /* "error" signal with a callback type of
-       void( *callback )( TrCore*, enum tr_core_err, const char * humanReadable, gpointer userData ). */
-    int errsig;
-
-    /* "add-torrent-prompt" signal with a callback type of
-       void ( *callback)( TrCore *, gpointer ctor, gpointer userData )
-       The handler assumes ownership of ctor and must free when done */
-    int promptsig;
-
-    /* "quit" signal:
-       void handler( TrCore *, gpointer ) */
-    int quitsig;
-
-    /* "prefs-changed" signal:
-       void handler( TrCore *, int, gpointer ) */
-    int prefsig;
-}
-TrCoreClass;
 
 enum tr_core_err
 {
@@ -87,6 +57,20 @@ enum tr_core_err
     TR_CORE_ERR_ADD_TORRENT_DUP  = TR_PARSE_DUPLICATE,
     TR_CORE_ERR_NO_MORE_TORRENTS = 1000 /* finished adding a batch */
 };
+
+typedef struct _TrCoreClass
+{
+    GObjectClass parent_class;
+
+    void (* add_error)         (TrCore*, enum tr_core_err, const char * name);
+    void (* add_prompt)        (TrCore*, gpointer ctor);
+    void (* blocklist_updated) (TrCore*, int ruleCount );
+    void (* busy)              (TrCore*, gboolean isBusy);
+    void (* prefs_changed)     (TrCore*, const char* key);
+    void (* port_tested)       (TrCore*, gboolean isOpen);
+    void (* quit)              (TrCore*);
+}
+TrCoreClass;
 
 GType          tr_core_get_type( void );
 
@@ -98,6 +82,10 @@ void           tr_core_close( TrCore* );
 GtkTreeModel * tr_core_model( TrCore * self );
 
 tr_session *   tr_core_session( TrCore * self );
+
+int            tr_core_get_active_torrent_count( TrCore * self );
+
+int            tr_core_get_torrent_count( TrCore * self );
 
 /******
 *******
@@ -159,12 +147,9 @@ void     tr_core_torrents_added( TrCore * self );
 *******
 ******/
 
-/* we've gotten notice from RPC that a torrent has been destroyed;
-   update our gui accordingly */
-void  tr_core_torrent_destroyed( TrCore * self, int torrentId );
-
 /* remove a torrent */
-void  tr_core_remove_torrent( TrCore * self, TrTorrent * gtor, int deleteFiles );
+void  tr_core_remove_torrent( TrCore * self, TrTorrent * gtor, gboolean deleteFiles );
+void  tr_core_remove_torrent_from_id( TrCore * self, int id, gboolean deleteFiles );
 
 /* update the model with current torrent status */
 void  tr_core_update( TrCore * self );
@@ -184,6 +169,8 @@ void tr_core_set_pref_double( TrCore * self, const char * key, double val );
 /**
 ***
 **/
+
+void tr_core_torrent_changed( TrCore * core, int id );
 
 void tr_core_port_test( TrCore * core );
 
@@ -208,7 +195,11 @@ enum
     MC_TORRENT_RAW,
     MC_SPEED_UP,
     MC_SPEED_DOWN,
+    MC_ACTIVE,
     MC_ACTIVITY,
+    MC_FINISHED,
+    MC_PRIORITY,
+    MC_TRACKERS,
     MC_ROW_COUNT
 };
 

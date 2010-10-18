@@ -28,6 +28,8 @@
 #endif
 
 #include "bencode.h"
+#include "bitfield.h"
+#include "utils.h"
 
 typedef enum { TR_NET_OK, TR_NET_ERROR, TR_NET_WAIT } tr_tristate_t;
 
@@ -39,23 +41,13 @@ struct tr_address;
 struct tr_announcer;
 struct tr_bandwidth;
 struct tr_bindsockets;
+struct tr_cache;
 struct tr_fdInfo;
 
-/**
- * How clock mode works:
- *
- * ._nextChangeAt, ._nextChangeValue and ._nextChangeAllowed are private fields
- * that are derived from .days, .beginMinute, .endMinute and the current time.
- * They're rebuilt when either (a) the user changes the clock settings or
- * (b) when the time at ._nextChangeAt is reached.
- *
- * When ._nextChangeAt is reached, if .isClockEnabled and ._nextChangeAllowed
- * are both true, then turtle mode's flag is set to ._nextChangeValue.
- */
 struct tr_turtle_info
 {
     /* TR_UP and TR_DOWN speed limits */
-    int speedLimit[2];
+    int speedLimit_Bps[2];
 
     /* is turtle mode on right now? */
     tr_bool isEnabled;
@@ -82,19 +74,10 @@ struct tr_turtle_info
      * indicates whether the change came from the user or from the clock. */
     tr_bool changedByUser;
 
-    /* this is the next time the clock will set turtle mode */
-    time_t _nextChangeAt;
-
-    /* the clock will set turtle mode to this flag. */
-    tr_bool _nextChangeValue;
-
-    /* When clock mode is on, only toggle turtle mode if this is true.
-     * This flag is used to filter out changes that fall on days when
-     * clock mode is disabled. */
-    tr_bool _nextChangeAllowed;
-
-    /* The last time the clock tested to see if _nextChangeAt was reached */
-    time_t testedAt;
+    /* bitfield of all the minutes in a week.
+     * Each bit's value indicates whether the scheduler wants turtle
+     * limits on or off at that given minute in the week. */
+    tr_bitfield minutes;
 };
 
 /** @brief handle to an active libtransmission session */
@@ -103,20 +86,25 @@ struct tr_session
     tr_bool                      isPortRandom;
     tr_bool                      isPexEnabled;
     tr_bool                      isDHTEnabled;
+    tr_bool                      isLPDEnabled;
     tr_bool                      isBlocklistEnabled;
     tr_bool                      isProxyEnabled;
     tr_bool                      isProxyAuthEnabled;
+    tr_bool                      isTorrentDoneScriptEnabled;
     tr_bool                      isClosed;
     tr_bool                      useLazyBitfield;
     tr_bool                      isIncompleteFileNamingEnabled;
     tr_bool                      isRatioLimited;
+    tr_bool                      isIdleLimited;
     tr_bool                      isIncompleteDirEnabled;
+    tr_bool                      pauseAddedTorrent;
+    tr_bool                      deleteSourceTorrent;
 
     tr_benc                      removedTorrents;
 
     int                          umask;
 
-    int                          speedLimit[2];
+    int                          speedLimit_Bps[2];
     tr_bool                      speedLimitEnabled[2];
 
     struct tr_turtle_info        turtle;
@@ -135,15 +123,28 @@ struct tr_session
 
     int                          uploadSlotsPerTorrent;
 
-    tr_port                      peerPort;
+    /* The open port on the local machine for incoming peer requests */
+    tr_port                      private_peer_port;
+
+    /**
+     * The open port on the public device for incoming peer requests.
+     * This is usually the same as private_peer_port but can differ
+     * if the public device is a router and it decides to use a different
+     * port than the one requested by Transmission.
+     */
+    tr_port                      public_peer_port;
+
     tr_port                      randomPortLow;
     tr_port                      randomPortHigh;
 
     int                          proxyPort;
     int                          peerSocketTOS;
+    char *                       peer_congestion_algorithm;
 
     int                          torrentCount;
     tr_torrent *                 torrentList;
+
+    char *                       torrentDoneScript;
 
     char *                       tag;
     char *                       configDir;
@@ -160,6 +161,8 @@ struct tr_session
     struct tr_list *             blocklists;
     struct tr_peerMgr *          peerMgr;
     struct tr_shared *           shared;
+
+    struct tr_cache *            cache;
 
     struct tr_lock *             lock;
 
@@ -182,6 +185,8 @@ struct tr_session
     struct tr_bandwidth        * bandwidth;
 
     double                       desiredRatio;
+    
+    uint16_t                     idleLimitMinutes;
 
     struct tr_bindinfo         * public_ipv4;
     struct tr_bindinfo         * public_ipv6;
@@ -194,7 +199,15 @@ struct tr_session
     tr_bool                      bindLocalPort;
 };
 
+static inline tr_port
+tr_sessionGetPublicPeerPort( const tr_session * session )
+{
+    return session->public_peer_port;
+}
+
 tr_bool      tr_sessionAllowsDHT( const tr_session * session );
+
+tr_bool      tr_sessionAllowsLPD( const tr_session * session );
 
 const char * tr_sessionFindTorrentFile( const tr_session * session,
                                         const char *       hashString );
@@ -215,6 +228,8 @@ tr_bool      tr_sessionIsLocked( const tr_session * );
 const struct tr_address*  tr_sessionGetPublicAddress( const tr_session *, int tr_af_type );
 
 struct tr_bindsockets * tr_sessionGetBindSockets( tr_session * );
+
+int tr_sessionCountTorrents( const tr_session * session ); 
 
 tr_bool tr_sessionShouldBindLocalPort( const tr_session * session );
 
@@ -255,5 +270,31 @@ static inline tr_bool tr_isPriority( tr_priority_t p )
         || ( p == TR_PRI_NORMAL )
         || ( p == TR_PRI_HIGH );
 }
+
+/***
+****
+***/
+
+static inline unsigned int toSpeedBytes ( unsigned int KBps ) { return KBps * tr_speed_K; }
+static inline double       toSpeedKBps  ( unsigned int Bps )  { return Bps / (double)tr_speed_K; }
+
+static inline uint64_t toMemBytes ( unsigned int MB ) { uint64_t B = tr_mem_K * tr_mem_K; B *= MB; return B; }
+static inline int      toMemMB    ( uint64_t B )      { return B / ( tr_mem_K * tr_mem_K ); }
+
+/**
+**/
+
+int  tr_sessionGetSpeedLimit_Bps( const tr_session *, tr_direction );
+int  tr_sessionGetAltSpeed_Bps  ( const tr_session *, tr_direction );
+int  tr_sessionGetRawSpeed_Bps  ( const tr_session *, tr_direction );
+int  tr_sessionGetPieceSpeed_Bps( const tr_session *, tr_direction );
+
+void tr_sessionSetSpeedLimit_Bps( tr_session *, tr_direction, int Bps );
+void tr_sessionSetAltSpeed_Bps  ( tr_session *, tr_direction, int Bps );
+
+tr_bool  tr_sessionGetActiveSpeedLimit_Bps( const tr_session  * session,
+                                            tr_direction        dir,
+                                            int               * setme );
+
 
 #endif
