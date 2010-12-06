@@ -373,32 +373,25 @@ Details :: refresh( )
         {
             const double d = 100.0 * ( sizeWhenDone ? ( sizeWhenDone - leftUntilDone ) / sizeWhenDone : 1 );
             QString pct = Formatter::percentToString( d );
-            QString astr;
-
-            if( sizeWhenDone )
-                astr = Formatter::percentToString( ( 100.0 * available ) / sizeWhenDone );
-            else
-                astr = "100";
 
             if( !haveUnverified && !leftUntilDone )
             {
-                string = tr( "%1 (%2%)" )
-                             .arg( Formatter::sizeToString( haveVerified + haveUnverified ) )
-                             .arg( pct );
+                string = tr( "%1 (100%)" )
+                             .arg( Formatter::sizeToString( haveVerified ) );
             }
             else if( !haveUnverified )
             {
-                string = tr( "%1 (%2% of %3% Available)" )
-                             .arg( Formatter::sizeToString( haveVerified + haveUnverified ) )
-                             .arg( pct )
-                             .arg( astr );
+                string = tr( "%1 of %2 (%3%)" )
+                             .arg( Formatter::sizeToString( haveVerified ) )
+                             .arg( Formatter::sizeToString( sizeWhenDone ) )
+                             .arg( pct );
             }
             else
             {
-                string = tr( "%1 (%2% of %3% Available) + %4 Unverified" )
+                string = tr( "%1 of %2% (%3%), %4 Unverified" )
                              .arg( Formatter::sizeToString( haveVerified + haveUnverified ) )
+                             .arg( Formatter::sizeToString( sizeWhenDone ) )
                              .arg( pct )
-                             .arg( astr )
                              .arg( Formatter::sizeToString( haveUnverified ) );
             }
         }
@@ -428,7 +421,7 @@ Details :: refresh( )
         const QString dstr = Formatter::sizeToString( d );
         const QString fstr = Formatter::sizeToString( f );
         if( f )
-            string = tr( "%1 (+%2 corrupt)" ).arg( dstr ).arg( fstr );
+            string = tr( "%1 (%2 corrupt)" ).arg( dstr ).arg( fstr );
         else
             string = dstr;
     }
@@ -619,10 +612,12 @@ Details :: refresh( )
         }
         if( mixed_creator && mixed_date )
             string = mixed;
-        else if( mixed_date )
+        else if( mixed_date && !creator.isEmpty())
             string = tr( "Created by %1" ).arg( creator );
-        else if( mixed_creator || creator.isEmpty( ) )
+        else if( mixed_creator && !date.isEmpty())
             string = tr( "Created on %1" ).arg( date );
+        else if( creator.isEmpty() && date.isEmpty())
+            string = tr( "N/A" );
         else
             string = tr( "Created by %1 on %2" ).arg( creator ).arg( date );
     }
@@ -844,7 +839,6 @@ Details :: createInfoTab( )
     HIG * hig = new HIG( this );
 
     hig->addSectionTitle( tr( "Activity" ) );
-    hig->addRow( tr( "Torrent size:" ), mySizeLabel = new SqueezeLabel );
     hig->addRow( tr( "Have:" ), myHaveLabel = new SqueezeLabel );
     hig->addRow( tr( "Availability:" ), myAvailabilityLabel = new SqueezeLabel );
     hig->addRow( tr( "Downloaded:" ), myDownloadedLabel = new SqueezeLabel );
@@ -858,6 +852,7 @@ Details :: createInfoTab( )
 
     hig->addSectionDivider( );
     hig->addSectionTitle( tr( "Details" ) );
+    hig->addRow( tr( "Size:" ), mySizeLabel = new SqueezeLabel );
     hig->addRow( tr( "Location:" ), myLocationLabel = new SqueezeLabel );
     hig->addRow( tr( "Hash:" ), myHashLabel = new SqueezeLabel );
     hig->addRow( tr( "Privacy:" ), myPrivacyLabel = new SqueezeLabel );
